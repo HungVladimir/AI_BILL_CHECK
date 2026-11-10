@@ -84,6 +84,10 @@ class MinioUploader:
         # Đảm bảo dữ liệu là chuẩn PNG
         try:
             im = Image.open(io.BytesIO(raw_bytes))
+            if im.mode in ("RGBA", "P"):
+                im = im.convert("RGBA")
+            elif im.mode != "RGB":
+                im = im.convert("RGB")
             png_io = io.BytesIO()
             im.save(png_io, format="PNG")
             upload_data = png_io.getvalue()

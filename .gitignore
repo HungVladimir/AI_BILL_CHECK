@@ -4,4 +4,9 @@ output_debug/
 input/*
 !input/.gitkeep
 
+Filequest/
+filequest/
+file_quest/
+
+test_data/
 

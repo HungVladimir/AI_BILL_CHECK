@@ -4,12 +4,14 @@
 # ==============================================================================
 """
 Đọc File Excel 2 (Sheet 'Thanh toán' hoặc Active sheet):
-  1. Trích xuất KnoxID (USERID) và Họ và Tên (Name).
+  1. Tự động tìm Sheet chuẩn chứa danh sách KnoxID và đơn giá các tháng.
   2. Bóc tách email từ cột 'Thanh toán' (chuẩn hóa @gmail.com hoặc giữ @yahoo.com.vn).
   3. Bóc tách đơn giá từng dịch vụ AI (ChatGPT Plus, Claude Pro, Gemini Pro) theo tháng yêu cầu.
-  4. Ghép nối (Join) 1-1 với ảnh hóa đơn từ File 1 để tạo bản ghi cơ sở dữ liệu hoàn chỉnh.
+  4. Giới hạn chính xác phạm vi cột của tháng (Merged Cell / Total Boundary) tránh ghi đè sang tháng khác.
+  5. Ghép nối (Join) 1-1 với ảnh hóa đơn từ File 1 để tạo bản ghi cơ sở dữ liệu hoàn chỉnh.
 """
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import openpyxl
@@ -62,6 +64,121 @@ def clean_email(raw_val: Any) -> str:
     return f"{s_lower}@gmail.com"
 
 
+def parse_currency_amount(raw_amt: Any) -> float:
+    """
+    Chuyển đổi an toàn giá trị ô tiền tệ sang float.
+    Tránh lỗi nhân 10 khi số là float (e.g. 499000.0).
+    Xử lý được cả số thực, số nguyên, chuỗi có dấu phẩy/chấm/đơn vị tiền tệ.
+    """
+    if raw_amt is None:
+        return 0.0
+    if isinstance(raw_amt, (int, float)):
+        return float(raw_amt)
+
+    s = str(raw_amt).strip()
+    if not s or s.lower() in ["", "-", "nan", "none"]:
+        return 0.0
+
+    s_clean = re.sub(r'[^\d.,]', '', s)
+    if not s_clean:
+        return 0.0
+
+    # Phân biệt dấu phân cách hàng ngàn và thập phân
+    if ',' in s_clean and '.' in s_clean:
+        if s_clean.rfind(',') > s_clean.rfind('.'):
+            # Kiểu 1.234.567,89
+            s_clean = s_clean.replace('.', '').replace(',', '.')
+        else:
+            # Kiểu 1,234,567.89
+            s_clean = s_clean.replace(',', '')
+    elif ',' in s_clean:
+        parts = s_clean.split(',')
+        if len(parts[-1]) == 3:
+            s_clean = s_clean.replace(',', '')
+        else:
+            s_clean = s_clean.replace(',', '.')
+    elif '.' in s_clean:
+        parts = s_clean.split('.')
+        if len(parts[-1]) == 3 and len(parts) > 1:
+            s_clean = s_clean.replace('.', '')
+
+    try:
+        return float(s_clean)
+    except Exception:
+        return 0.0
+
+
+def get_month_match_candidates(month_str: str) -> List[str]:
+    """
+    Sinh danh sách các biến thể có thể xuất hiện trong Header File 2:
+    '2026-08' -> ['aug-26', 'aug 26', 'august-26', 'aug', '2026-08', '2026.08', '08/2026', '8/2026', 'tháng 8', 'tháng 08']
+    """
+    candidates = []
+    if not month_str:
+        return candidates
+
+    clean_m = month_str.strip()
+    candidates.append(clean_m.lower())
+    candidates.append(clean_m.replace('-', '.').lower())
+
+    try:
+        dt = datetime.strptime(clean_m, "%Y-%m")
+        candidates.append(dt.strftime("%b-%y").lower())  # 'aug-26'
+        candidates.append(dt.strftime("%b %y").lower())  # 'aug 26'
+        candidates.append(dt.strftime("%b_%y").lower())  # 'aug_26'
+        candidates.append(dt.strftime("%B-%y").lower())  # 'august-26'
+        candidates.append(dt.strftime("%B %y").lower())  # 'august 26'
+        candidates.append(dt.strftime("%b").lower())     # 'aug'
+        candidates.append(f"{dt.month}/{dt.year}".lower())
+        candidates.append(f"{str(dt.month).zfill(2)}/{dt.year}".lower())
+        candidates.append(f"tháng {dt.month}".lower())
+        candidates.append(f"tháng {str(dt.month).zfill(2)}".lower())
+        candidates.append(f"thang {dt.month}".lower())
+        candidates.append(f"thang {str(dt.month).zfill(2)}".lower())
+        candidates.append(f"t{dt.month}".lower())
+        candidates.append(f"t{str(dt.month).zfill(2)}".lower())
+    except Exception:
+        pass
+
+    return list(dict.fromkeys(candidates))
+
+
+def select_best_sheet_matcher(wb, file_path: Path):
+    """
+    Tự động chọn Sheet chính xác chứa dữ liệu bảng thanh toán File 2:
+    Ưu tiên sheet có chứa 'knoxid', 'name' hoặc từ khóa 'thanh toán', 'member', 'share'.
+    """
+    sheet_scores = []
+    for sname in wb.sheetnames:
+        score = 0
+        s_lower = sname.lower()
+        if any(k in s_lower for k in ["thanh toán", "thanh toan", "payment"]):
+            score += 30
+        elif any(k in s_lower for k in ["member", "share", "crew", "ai"]):
+            score += 20
+
+        # Kiểm tra nội dung 5 dòng đầu
+        ws_temp = wb[sname]
+        try:
+            for r in range(1, min(7, ws_temp.max_row + 1)):
+                row_vals = [str(ws_temp.cell(r, c).value or "").strip().lower() for c in range(1, min(25, ws_temp.max_column + 1))]
+                if any("knoxid" in v for v in row_vals):
+                    score += 40
+                if any(k in v for v in row_vals for k in ["name", "họ và tên", "ho va ten"]):
+                    score += 20
+                if any(any(kw in v for kw in ["chatgpt", "claude", "gemini", "plus", "pro", "total"]) for v in row_vals):
+                    score += 20
+        except Exception:
+            pass
+
+        sheet_scores.append((score, sname))
+
+    sheet_scores.sort(key=lambda x: x[0], reverse=True)
+    if sheet_scores and sheet_scores[0][0] > 0:
+        return wb[sheet_scores[0][1]]
+    return wb.active
+
+
 class ExcelDataMatcher:
     """Bộ ghép nối đối soát dữ liệu giữa File 1 và File 2."""
 
@@ -70,7 +187,7 @@ class ExcelDataMatcher:
         if not self.excel2_path.exists():
             raise FileNotFoundError(f"Không tìm thấy file Excel 2: {self.excel2_path}")
 
-        self.month_str = month_str  # '2026-10' hoặc None (tự trích xuất)
+        self.month_str = month_str  # '2026-08', '2026-10' hoặc None
         self.month_col_header = convert_month_to_excel2_header(self.month_str) if self.month_str else None
 
     def load_users_data(self) -> Dict[str, Dict[str, Any]]:
@@ -91,102 +208,125 @@ class ExcelDataMatcher:
         }
         """
         wb = openpyxl.load_workbook(self.excel2_path, data_only=True)
-        # Ưu tiên sheet có tên 'thanh toán' hoặc 'payment', nếu không lấy active
-        target_sheet = None
-        for sname in wb.sheetnames:
-            if "thanh toán" in sname.lower() or "thanh toan" in sname.lower():
-                target_sheet = wb[sname]
-                break
-        if not target_sheet:
-            target_sheet = wb.active
+        ws = select_best_sheet_matcher(wb, self.excel2_path)
 
-        ws = target_sheet
-        print(f"📄 [ExcelMatcher] Đang đọc File 2 tại sheet: '{ws.title}' (Tổng {ws.max_row} dòng)")
+        print(f"📄 [ExcelMatcher] Đang đọc File 2: {self.excel2_path.name}")
+        print(f"   - Danh sách sheet: {wb.sheetnames}")
+        print(f"   - Sheet được chọn: '{ws.title}' (Tổng {ws.max_row} dòng, {ws.max_column} cột)")
 
-        # 1. Quét tìm dòng header tháng (Row 1) và dòng header provider (Row 2)
-        month_header_row = 1
-        sub_header_row = 2
-
-        # Dò tìm vị trí các cột
+        # 1. Quét tìm vị trí các cột định danh: KnoxID, Name, Email (cột Thanh toán)
         col_knoxid = None
         col_name = None
         col_email = None
 
-        # Bản đồ các cột theo tháng: { 'chatgpt': col_idx, 'claude': col_idx, 'gemini': col_idx }
-        target_month_col_map = {}
-
-        # Dò tìm trong 5 dòng đầu
         for r in range(1, min(6, ws.max_row + 1)):
             for c in range(1, ws.max_column + 1):
                 cell_val = str(ws.cell(r, c).value or "").strip()
                 cell_lower = cell_val.lower()
 
-                if "knoxid" in cell_lower:
+                if "knoxid" in cell_lower and not col_knoxid:
                     col_knoxid = c
-                elif cell_lower in ["name", "họ và tên", "ho va ten"]:
+                elif cell_lower in ["name", "họ và tên", "ho va ten", "họ tên"] and not col_name:
                     col_name = c
-                elif "thanh toán" in cell_lower and not col_email and r <= 2:
+                elif "thanh toán" in cell_lower and not col_email and r <= 3:
                     # Cột email nằm dưới nhóm Gemini Pro / Đăng nhập / Thanh toán
                     col_email = c
 
-        # Xác định tháng mục tiêu nếu chưa có
-        if not self.month_col_header:
-            # Tự tìm tháng xuất hiện gần nhất trong dòng 1 (ưu tiên cột có định dạng 'Mmm-YY' ví dụ 'Oct-26')
-            for c in range(1, ws.max_column + 1):
-                val = str(ws.cell(1, c).value or "").strip()
-                if re.match(r'^[A-Za-z]{3}-\d{2}$', val):
-                    self.month_col_header = val  # e.g. 'Oct-26'
-            if not self.month_col_header:
-                self.month_col_header = "Oct-26"
+        # Mặc định fallback nếu không thấy cột tên
+        if not col_name:
+            col_name = 3
+        if not col_knoxid:
+            col_knoxid = 2
 
-        print(f"🎯 [ExcelMatcher] Cột Tháng đối soát mục tiêu: '{self.month_col_header}'")
+        print(f"   - Cột định danh nhận diện: KnoxID=Cột {col_knoxid}, Họ tên=Cột {col_name}, Email=Cột {col_email or 5}")
 
-        # Tìm phạm vi các cột con của tháng này trong Header
-        # File 2 có merged cell cho tháng: 'Oct-26' trải rộng trên các cột con: ChatGPT Plus, Claude Pro, Gemini Pro, Total
+        # 2. Định vị cột Tháng mục tiêu
+        month_candidates = get_month_match_candidates(self.month_str)
         month_start_col = None
-        for c in range(1, ws.max_column + 1):
-            val1 = str(ws.cell(1, c).value or "").strip()
-            if self.month_col_header.lower() in val1.lower():
-                month_start_col = c
+        month_row = 1
+
+        # Dò tìm cột tháng trong các dòng header (Dòng 1 đến dòng 3)
+        for r in range(1, 4):
+            for c in range(1, ws.max_column + 1):
+                val = str(ws.cell(r, c).value or "").strip().lower()
+                if not val:
+                    continue
+                if any(cand == val or f" {cand} " in f" {val} " or val.startswith(cand) for cand in month_candidates):
+                    month_start_col = c
+                    month_row = r
+                    print(f"🎯 [ExcelMatcher] Tìm thấy cột Tháng '{val}' tại Dòng {r}, Cột {c}")
+                    break
+            if month_start_col:
                 break
 
-        if month_start_col:
-            # Quét các cột con tiếp theo trong tháng
-            for c in range(month_start_col, min(month_start_col + 6, ws.max_column + 1)):
-                # Lấy tên cột con ở dòng 2 (hoặc dòng 1 nếu không merge)
-                sub_val = str(ws.cell(2, c).value or ws.cell(1, c).value or "").strip().lower()
-                for p_key, p_cfg in PROVIDERS_CONFIG.items():
-                    if any(kw in sub_val for kw in p_cfg["keywords_file2"]):
+        # Fallback nếu không khớp candidates: tìm cột theo mẫu 'Mmm-YY' (e.g. 'Oct-26', 'Aug-26')
+        if not month_start_col:
+            for c in range(1, ws.max_column + 1):
+                val = str(ws.cell(1, c).value or ws.cell(2, c).value or "").strip()
+                if re.match(r'^[A-Za-z]{3}-\d{2}$', val):
+                    month_start_col = c
+                    print(f"🎯 [ExcelMatcher] Fallback chọn cột Tháng '{val}' tại Cột {c}")
+                    break
+
+        if not month_start_col:
+            print("⚠️ [ExcelMatcher Warning] Không tìm thấy cột Tháng tương ứng trong File 2! Mặc định dò tìm các cột có tên dịch vụ.")
+            month_start_col = 6
+
+        # 3. Xác định phạm vi các cột con của tháng này (tránh quét lấn sang tháng sau)
+        # Kiểm tra merged cell tại (month_row, month_start_col)
+        month_end_col = month_start_col + 5
+        for mrange in ws.merged_cells.ranges:
+            if mrange.min_row <= month_row <= mrange.max_row and mrange.min_col == month_start_col:
+                month_end_col = mrange.max_col
+                break
+
+        # Đảm bảo không vượt quá max_column
+        month_end_col = min(month_end_col, ws.max_column)
+
+        # 4. Ánh xạ các cột nhà cung cấp (ChatGPT, Claude, Gemini) trong phạm vi tháng
+        target_month_col_map = {}
+        for c in range(month_start_col, month_end_col + 1):
+            # Thu thập tiêu đề con ở các dòng (month_row, month_row + 1, month_row + 2)
+            sub_texts = []
+            for r_sub in range(month_row, month_row + 3):
+                s_val = str(ws.cell(r_sub, c).value or "").strip().lower()
+                if s_val and s_val not in sub_texts:
+                    sub_texts.append(s_val)
+            combined_sub = " ".join(sub_texts)
+
+            # Nếu gặp cột Total thì dừng hoặc bỏ qua
+            if "total" in combined_sub and not any(p in combined_sub for p in ["chatgpt", "claude", "gemini"]):
+                continue
+
+            for p_key, p_cfg in PROVIDERS_CONFIG.items():
+                if p_key not in target_month_col_map:
+                    if any(kw in combined_sub for kw in p_cfg["keywords_file2"]):
                         target_month_col_map[p_key] = c
+                        break
 
-        print(f"📊 [ExcelMatcher] Vị trí cột đơn giá cho tháng '{self.month_col_header}': {target_month_col_map}")
+        print(f"📊 [ExcelMatcher] Ánh xạ cột đơn giá: {target_month_col_map}")
 
-        # 2. Đọc danh sách nhân sự và số tiền
+        # 5. Đọc danh sách nhân sự và số tiền
         users_dict = {}
-        data_start_row = max(month_header_row, sub_header_row) + 1
+        data_start_row = month_row + 2
 
         for r in range(data_start_row, ws.max_row + 1):
-            name_val = ws.cell(r, col_name or 3).value
+            name_val = ws.cell(r, col_name).value
             if not name_val:
                 continue
 
             clean_name_key = normalize_name(name_val)
-            knox_id = str(ws.cell(r, col_knoxid or 2).value or "").strip()
+            if any(k in clean_name_key for k in ["tổng", "total", "sum", "ghi chú", "note"]):
+                continue
+
+            knox_id = str(ws.cell(r, col_knoxid).value or "").strip()
             email_val = clean_email(ws.cell(r, col_email or 5).value)
 
             # Lấy đơn giá từng dịch vụ
             amounts = {}
             for p_key, col_idx in target_month_col_map.items():
                 raw_amt = ws.cell(r, col_idx).value
-                try:
-                    if raw_amt is not None and str(raw_amt).strip() not in ["", "-", "nan"]:
-                        # Xử lý cả dạng chuỗi có dấu phẩy '499,000'
-                        clean_amt_str = str(raw_amt).replace(",", "").replace(".", "").strip()
-                        amounts[p_key] = float(clean_amt_str)
-                    else:
-                        amounts[p_key] = 0.0
-                except Exception:
-                    amounts[p_key] = 0.0
+                amounts[p_key] = parse_currency_amount(raw_amt)
 
             users_dict[clean_name_key] = {
                 "name": str(name_val).strip(),
@@ -197,17 +337,17 @@ class ExcelDataMatcher:
             }
 
         wb.close()
-        print(f"👥 [ExcelMatcher] Đã nạp thành công thông tin của {len(users_dict)} nhân sự từ File 2.")
+        print(f"👥 [ExcelMatcher] Đã nạp thành công {len(users_dict)} nhân sự từ File 2.")
         return users_dict
 
     def pair_and_build_records(self, extracted_invoices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Ghép nối ảnh hóa đơn với dữ liệu File 2.
-        Trả về danh sách các bản ghi hoàn chỉnh sẵn sàng nạp vào Database & MinIO:
+        Trả về danh sách các bản ghi hoàn chỉnh sẵn sàng nạp vào Database & MinIO.
         """
         users_dict = self.load_users_data()
         final_records = []
-        month_db = self.month_str or "2026-10"
+        month_db = self.month_str or "2026-08"
 
         for inv in extracted_invoices:
             sub_name = inv["submitter_name"]
@@ -232,7 +372,7 @@ class ExcelDataMatcher:
             # Sinh ID ngẫu nhiên 10 ký tự tương đương LOCAL_AI.FN_MAKE_ID(10)
             inv_id = generate_invoice_id(10)
 
-            # Đường dẫn chuẩn trên MinIO
+            # Đường dẫn chuẩn trên MinIO: aibill/{YYYY-MM}/{ID}.png
             file_path = f"aibill/{month_db}/{inv_id}.png"
 
             record = {
@@ -254,7 +394,7 @@ class ExcelDataMatcher:
                 "EMAIL_MATCH": 1 if user_email else 0,
                 "WARNINGS": None,
                 "AI_RAW": None,
-                "STATUS": "confirmed",
+                "STATUS": "confirmed" if (amount > 0 and knox_id) else "pending",
                 "ADMIN_NOTE": None,
                 "REVIEWED_AT": None,
                 "USERID": knox_id,

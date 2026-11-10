@@ -225,30 +225,56 @@ def generate_invoice_id(length: int = 10) -> str:
 
 ---
 
-## 7. ĐỀ XUẤT CẤU TRÚC THƯ MỤC DỰ ÁN MỚI
+## 7. CẤU TRÚC THƯ MỤC DỰ ÁN & HẠ TẦNG PRIVATE LOCAL
 
-Để độc lập hoàn toàn với dự án MEP hiện tại và không làm ảnh hưởng code cũ, chúng ta sẽ thiết kế một thư mục module riêng:
+Module được thiết kế độc lập, có thể chạy tại `D:\Project\ai_bill_processor\`, `D:\Project\AI_BILL_CHECK\` hoặc trong `MEP_OneAI_System\ai_bill_processor\`:
 
 ```text
-MEP_OneAI_System/
-└── ai_bill_processor/                     <-- FOLDER MỚI TÁCH BIỆT
-    ├── KE_HOACH_PHAN_TICH_XU_LY_HOA_DON_AI_MINIO_DB.md  <-- Tài liệu này
-    ├── .env                               <-- Cấu hình kết nối DB (MBLDB) & MinIO
-    ├── config.py                          <-- Cấu hình đường dẫn, tự động bóc tách tháng YYYY-MM
-    ├── excel_image_extractor.py           <-- Bóc ảnh RAW từ File 1 theo đúng ô (Cell Anchor)
-    ├── excel_data_matcher.py              <-- Đọc File 2, chuẩn hóa email, tách KnoxID & Amount
-    ├── minio_uploader.py                  <-- Upload ảnh lên MinIO: aibill/{YYYY-MM}/{ID}.png
-    ├── db_sync.py                         <-- Ghi vào bảng LOCAL_AI.AI_INVOICE_CHECK
-    ├── run_sync.py                        <-- File chạy chính (CLI runner)
-    ├── input/                             <-- Nơi thả 2 file Excel đầu vào
-    └── output_debug/                      <-- Nơi lưu ảnh preview và file kiểm tra đối chiếu
+ai_bill_processor/
+├── config.py             # Cấu hình dịch vụ AI, thư mục Private, MinIO, Oracle DB
+├── id_generator.py       # Thuật toán sinh ID 10 ký tự tương thích Oracle FN_MAKE_ID
+├── excel_extractor.py    # Bóc tách ảnh RAW từ OpenXML, hỗ trợ Header đa tầng & Fallback
+├── excel_matcher.py      # Đối soát File 2 (KnoxID, Email, Đơn giá an toàn qua parse_currency_amount)
+├── excel_reporter.py     # Xuất Báo cáo đối soát Excel 2 sheet & lưu ảnh bóc tách vào Private
+├── minio_client.py       # Upload ảnh lên MinIO S3 (aibill/{YYYY-MM}/{ID}.png)
+├── db_sync.py            # Đồng bộ Oracle DB (LOCAL_AI.AI_INVOICE_CHECK), hỗ trợ dọn tháng cũ
+├── main_sync.py          # CLI Runner chính điều phối toàn bộ quy trình (Mặc định: TEST)
+├── test_pipeline.py      # Bộ kiểm thử tự động 7 bước
+├── input/                # Thư mục dự phòng
+├── output_debug/         # Báo cáo CSV, JSON và ảnh preview nội bộ
+└── test_data/            # Dữ liệu giả lập unit test
 ```
+
+### Cấu trúc thư mục Private trên máy cá nhân:
+Mặc định tại: `D:\Private_Documents\Doc\AI-Bill\`
+* File 1: `(AI Crew) thanh toán hóa đơn tháng 2026.08.xlsx` (chứa ảnh hóa đơn)
+* File 2: `[AI Crew] member share.xlsx` (chứa thông tin KnoxID, đơn giá)
+* Thư mục đầu ra tự sinh: `output_reports/`
+  * File báo cáo Excel: `Bao_cao_doi_soat_hoa_don_AI_2026-08_TEST.xlsx`
+  * Thư mục ảnh bóc tách: `extracted_images_2026-08/`
 
 ---
 
-## 8. KẾT LUẬN & SẴN SÀNG TRIỂN KHAI
+## 8. HƯỚNG DẪN VẬN HÀNH: CHẠY TEST & CHẠY THẬT
 
-Toàn bộ luồng nghiệp vụ hiện tại đã sáng tỏ và sẵn sàng 100%. Khi anh sẵn sàng, chỉ cần:
-1. Xác nhận bắt đầu triển khai.
-2. Thả 2 file Excel mẫu vào thư mục `input/` để chạy thử nghiệm thực tế.
+### 8.1. Chế độ TEST (Kiểm thử đối soát an toàn)
+* **Đặc điểm:** Đọc file thật từ thư mục Private, bóc tách ảnh thật, đối soát khớp giá, **KHÔNG ghi vào Database**, **KHÔNG upload MinIO**.
+* **Kết quả:** Sinh file Excel báo cáo đối soát 2 sheet chuyên nghiệp và thư mục ảnh bóc tách ngay tại `D:\Private_Documents\Doc\AI-Bill\output_reports\` để người dùng mở lên kiểm tra đối chiếu.
+* **Câu lệnh thực thi:**
+  ```bash
+  python main_sync.py
+  # hoặc: python main_sync.py --test
+  ```
+
+### 8.2. Chế độ CHẠY THẬT (Đồng bộ MinIO S3 & Oracle DB)
+* **Đặc điểm:** Sau khi đã xem file Excel báo cáo và xác nhận số liệu chuẩn 100%, tiến hành tải toàn bộ ảnh lên MinIO S3, insert bản ghi vào bảng Oracle `LOCAL_AI.AI_INVOICE_CHECK` và xuất file Excel báo cáo hoàn tất `..._SYNCED.xlsx`. Dữ liệu sẽ ngay lập tức xuất hiện trên giao diện OneAI.
+* **Câu lệnh thực thi:**
+  ```bash
+  python main_sync.py --sync
+  ```
+* **Nếu muốn dọn dẹp tháng cũ trước khi nạp lại (tránh trùng lặp khi chạy lại cùng 1 tháng):**
+  ```bash
+  python main_sync.py --sync --clear-month
+  ```
+
 

@@ -65,7 +65,13 @@ def test_full_pipeline():
     test_dir.mkdir(parents=True, exist_ok=True)
 
     test_f1 = test_dir / "(AI Crew) thanh toán hóa đơn tháng 2026.10.xlsx"
-    wb1.save(test_f1)
+    try:
+        wb1.save(test_f1)
+    except PermissionError:
+        print(f"\n⚠️ [CẢNH BÁO KHÓA FILE] File '{test_f1.name}' đang được mở trong Excel!")
+        print("👉 Hệ thống tự động chuyển sang file kiểm thử dự phòng để tiếp tục...")
+        test_f1 = test_dir / f"(AI Crew) thanh toán hóa đơn tháng 2026.10_test_tmp.xlsx"
+        wb1.save(test_f1)
     wb1.close()
 
     # 4. Tạo Mock File 2: 'Chi tiết thanh toán 2026.10.xlsx'
@@ -82,7 +88,13 @@ def test_full_pipeline():
     ws2.append([3, "dong.nh", "Nguyễn Hữu Đồng", "dong.nh", "dongnguyen30794", 527778, 554444, 0, 1082222])
 
     test_f2 = test_dir / "Chi tiết thanh toán 2026.10.xlsx"
-    wb2.save(test_f2)
+    try:
+        wb2.save(test_f2)
+    except PermissionError:
+        print(f"\n⚠️ [CẢNH BÁO KHÓA FILE] File '{test_f2.name}' đang được mở trong Excel!")
+        print("👉 Hệ thống tự động chuyển sang file kiểm thử dự phòng để tiếp tục...")
+        test_f2 = test_dir / f"Chi tiết thanh toán 2026.10_test_tmp.xlsx"
+        wb2.save(test_f2)
     wb2.close()
 
     # 5. Test trích xuất và đối soát
