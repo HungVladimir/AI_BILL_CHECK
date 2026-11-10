@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+output_debug/
+input/*
+!input/.gitkeep
+
+
