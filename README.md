@@ -11,16 +11,15 @@ Hệ thống tự động hóa trích xuất ảnh hóa đơn nguyên bản (RAW
 1. **Bảo toàn 100% chất lượng ảnh gốc (RAW)**:
    - Trích xuất trực tiếp từ các file nén OpenXML (`xl/drawings/` + `xl/media/`).
    - Không qua nén lại, giữ nguyên kích thước pixel gốc, bitrate và metadata của ảnh.
-2. **Nhận diện Header thông minh (Header 2 tầng, Merged Cells & Multi-row)**:
-   - Tự động nhận diện và gộp tiêu đề qua nhiều dòng (Dòng 1: Hóa đơn thanh toán merge, Dòng 2: ChatGPT, Claude...).
-   - Tự kế thừa giá trị ô bị gộp (`ws.merged_cells.ranges`).
-3. **Cơ chế Cứu cánh Thông minh (Smart Anchor Fallback)**:
-   - Đọc trực tiếp tọa độ neo ô của từng ảnh từ OpenXML DrawingML.
-   - Kể cả khi tiêu đề cột không có từ khóa AI (chỉ ghi *"Minh chứng 1"*, *"Minh chứng 2"*), hệ thống vẫn tự động phát hiện cột có ảnh và ánh xạ sang nhà cung cấp tương ứng.
-4. **Đối soát KnoxID, Email và Đơn giá theo từng tháng**:
-   - Tự động nhận diện Tháng thanh toán từ tên File 1 (ví dụ `2026.08` ➔ `2026-08` ➔ ánh xạ sang cột `Aug-26` ở File 2).
-   - Tách độc lập từng dịch vụ (ChatGPT, Claude, Gemini) thành từng bản ghi riêng.
-   - Chuẩn hóa hàm đọc số tiền `parse_currency_amount` an toàn, hỗ trợ số nguyên, số thực, chuỗi có dấu phẩy/chấm (`499,000 đ`).
+2. **Nhận diện Sheet chuẩn theo quy ước nghiệp vụ**:
+   - **File 1**: Luôn ưu tiên tuyệt đối sheet **`Tổng hợp hóa đơn`** (chứa cột `Họ và tên`, `Hóa đơn ChatGPT`, `Hóa đơn Claude`...).
+   - **File 2**: Luôn ưu tiên tuyệt đối sheet **`Thanh toán`**.
+3. **Đối soát KnoxID, Email và Đơn giá đa tầng (File 2)**:
+   - **Phần thông tin tài khoản**: Cột `KnoxID`, `Name`, và các cột công cụ (`ChatGPT Plus`, `Claude Pro`, `Gemini Pro`...) với 2 cột con `Đăng nhập` và `Thanh toán`. Hệ thống lấy username ở cột **`Thanh toán`** này để tự động thêm đuôi `@gmail.com` hoặc giữ nguyên `@yahoo.com.vn`.
+   - **Phần đơn giá theo tháng**: Các cụm cột tháng (`Aug-26`, `Sep-26`, `Oct-26`...) với các cột con `ChatGPT Plus`, `Claude Pro`, `Total`. Hệ thống tự động bóc tách đơn giá chuẩn xác của từng người cho từng công cụ theo tháng cần xử lý.
+4. **Tách biệt lưu trữ an toàn (Private vs Project)**:
+   - **File Excel Báo cáo**: Được lưu vào thư mục Private (`D:\Private_Documents\Doc\AI-Bill\output_reports\`).
+   - **Ảnh hóa đơn bóc tách**: Được lưu vào thư mục Dự án (`D:\Project\AI_BILL_CHECK\extracted_images\{tháng}\`), vì thư mục Private không hỗ trợ lưu ảnh. Link ảnh trong file Excel trỏ trực tiếp đến thư mục này.
 5. **Xuất Báo cáo Đối soát Excel chuyên nghiệp (`excel_reporter.py`)**:
    - Tự động xuất file Excel 2 sheet:
      - **Sheet 1 (Chi tiết đối soát)**: STT, Mã ID, Tháng, Họ Tên, Knox ID, Email, Dịch vụ AI, Gói cước, Số tiền VNĐ, Trạng thái khớp, Đường dẫn MinIO, Kích thước ảnh, Link file ảnh local.

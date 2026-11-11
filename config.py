@@ -14,31 +14,40 @@ load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR.parent / "backend" / ".env")
 load_dotenv(find_dotenv())
 
-# --- 0. CẤU HÌNH ĐƯỜNG DẪN DỮ LIỆU PRIVATE (LOCAL & TEST) ---
-# Thư mục gốc chứa dữ liệu thực tế trên máy cá nhân của bạn
+# --- 0. CẤU HÌNH ĐƯỜNG DẪN DỮ LIỆU PRIVATE (EXCEL) VÀ DỰ ÁN (IMAGES) ---
+# Thư mục Private: Nơi lưu và đọc các file Excel (đầu vào & báo cáo đầu ra)
 AI_BILL_PRIVATE_DIR = Path(
     os.getenv("AI_BILL_PRIVATE_DIR")
     or os.getenv("AI_BILL_DIR")
     or r"D:\Private_Documents\Doc\AI-Bill"
 )
 
-# Cấu trúc thư mục con phân loại rõ ràng (tùy chọn hoặc tự động nhận diện):
-DIR_EXCEL1 = AI_BILL_PRIVATE_DIR / "invoices_file1"       # File 1: Chứa ảnh hóa đơn các tháng
-DIR_EXCEL2 = AI_BILL_PRIVATE_DIR / "members_file2"        # File 2: Chứa danh sách member share, đơn giá
-DIR_OUTPUT = AI_BILL_PRIVATE_DIR / "output_reports"       # Thư mục xuất file Excel báo cáo & ảnh bóc tách
+# Thư mục con trong Private dành riêng cho các file Excel:
+DIR_EXCEL1 = AI_BILL_PRIVATE_DIR / "invoices_file1"        # File 1: Chứa ảnh hóa đơn các tháng
+DIR_EXCEL2 = AI_BILL_PRIVATE_DIR / "members_file2"         # File 2: Chứa danh sách member share, đơn giá
+DIR_EXCEL_OUTPUT = AI_BILL_PRIVATE_DIR / "output_reports"  # Nơi xuất file Excel báo cáo đối soát
+
+# Thư mục lưu ảnh trích xuất: LUÔN LƯU TRONG FOLDER DỰ ÁN (PROJECT)
+# (Lý do: Thư mục Private không hỗ trợ lưu file ảnh)
+DIR_PROJECT_IMAGES = BASE_DIR / "extracted_images"
+
+# Tên Sheet chuẩn theo quy ước nghiệp vụ:
+SHEET_NAME_FILE1 = "Tổng hợp hóa đơn"  # File 1: Sheet chứa danh sách và ảnh hóa đơn
+SHEET_NAME_FILE2 = "Thanh toán"        # File 2: Sheet chứa KnoxID, email và đơn giá các tháng
 
 # --- 1. CẤU HÌNH NHÀ CUNG CẤP AI (CHATGPT, CLAUDE, GEMINI) ---
 PROVIDERS_CONFIG = {
     "chatgpt": {
         "name": "ChatGPT",
         "keywords_file1": [
-            "chatgpt", "chat gpt", "chat-gpt", "openai", "gpt", "gpt-4", "gpt4",
+            "chatgpt", "chat gpt", "chat-gpt", "chatcpt", "cpt", "openai", "gpt", "gpt-4", "gpt4",
             "hóa đơn chatgpt", "hoa don chatgpt", "hóa đơn chat gpt", "hoa don chat gpt",
-            "hóa đơn openai", "hoa don openai", "ảnh chatgpt", "minh chứng chatgpt",
-            "bill chatgpt", "receipt chatgpt", "chatgpt plus", "chatgpt 4"
+            "hóa đơn chatcpt", "hoa don chatcpt", "hóa đơn openai", "hoa don openai",
+            "ảnh chatgpt", "minh chứng chatgpt", "bill chatgpt", "receipt chatgpt",
+            "chatgpt plus", "chatgpt 4"
         ],
         "keywords_file2": [
-            "chatgpt plus", "chatgpt", "chat gpt", "chat-gpt", "gpt", "openai"
+            "chatgpt plus", "chatgpt", "chat gpt", "chat-gpt", "chatcpt", "gpt", "openai"
         ],
         "default_filename": "chatGpt.png",
         "plan": "ChatGPT Plus"
@@ -143,12 +152,13 @@ def locate_ai_bill_files(
     Hỗ trợ 2 mô hình lưu trữ:
       Mô hình A (Thư mục chung): Cả 2 file nằm ngay trong private_dir
       Mô hình B (Phân loại): File 1 nằm trong invoices_file1/, File 2 nằm trong members_file2/
-    Trả về: (file1_path, file2_path, output_reports_dir)
+    Trả về: (file1_path, file2_path, dir_excel_output, dir_project_images)
     """
     private_dir = Path(private_dir)
     dir_f1 = private_dir / "invoices_file1"
     dir_f2 = private_dir / "members_file2"
-    dir_out = private_dir / "output_reports"
+    dir_excel_out = private_dir / "output_reports"
+    dir_img_out = DIR_PROJECT_IMAGES
 
     # Tập hợp các thư mục có thể chứa File 1
     scan_dirs_f1 = [dir_f1] if dir_f1.exists() else []
@@ -191,6 +201,6 @@ def locate_ai_bill_files(
 
     selected_f2 = f2_candidates[0] if f2_candidates else None
 
-    return selected_f1, selected_f2, dir_out
+    return selected_f1, selected_f2, dir_excel_out, dir_img_out
 
 

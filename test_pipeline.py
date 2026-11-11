@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import extract_month_from_filename, convert_month_to_excel2_header
 from excel_extractor import ExcelImageExtractor
 from excel_matcher import ExcelDataMatcher
+from excel_reporter import export_reconciliation_excel
 from minio_client import MinioUploader
 from db_sync import DatabaseSynchronizer
 
@@ -42,7 +43,7 @@ def test_full_pipeline():
     # 3. Tạo Mock File 1: '(AI Crew) thanh toán hóa đơn tháng 2026.10.xlsx'
     wb1 = openpyxl.Workbook()
     ws1 = wb1.active
-    ws1.title = "Sheet1"
+    ws1.title = "Tổng hợp hóa đơn"
     ws1.append(["STT", "Họ và Tên", "GenID", "Team", "Group", "Part", "Hóa đơn ChatGPT", "Hóa đơn Claude", "Số tiền thanh toán", "Tiêu chuẩn thanh toán"])
     ws1.append([1, "Nguyễn Thị Kim Ngân", "24420206", "DTM Team", "DTM Group", "", "", "", 499000, 1200000])
     ws1.append([2, "Chu Thị Thảo Nga", "16425218", "DTM Team", "DTM Group", "", "", "", 0, 1200000])
@@ -144,8 +145,22 @@ def test_full_pipeline():
     assert ins_cnt == 3
     print("✅ 7. Kiểm tra Database Synchronizer (Dry-Run): ĐẠT")
 
+    # 8. Test Export Báo cáo Excel ra Private & Ảnh ra Project
+    mock_private_reports = test_dir / "mock_private_reports"
+    mock_project_images = test_dir / "mock_project_images"
+    rep_path = export_reconciliation_excel(
+        records=records,
+        month_str="2026-10",
+        excel_output_dir=mock_private_reports,
+        image_output_dir=mock_project_images,
+        is_test_mode=True
+    )
+    assert rep_path.exists(), "File báo cáo Excel phải được tạo thành công!"
+    assert any(mock_project_images.glob("*.png")), "Ảnh phải được lưu vào thư mục dự án!"
+    print("✅ 8. Kiểm tra tách biệt lưu Excel ở Private & Ảnh ở Project: ĐẠT")
+
     print("\n" + "=" * 60)
-    print("🎉 TOÀN BỘ 7 BƯỚC KIỂM THỬ ĐÃ THÀNH CÔNG 100%!")
+    print("🎉 TOÀN BỘ 8 BƯỚC KIỂM THỬ ĐÃ THÀNH CÔNG 100%!")
     print("=" * 60)
 
 if __name__ == "__main__":

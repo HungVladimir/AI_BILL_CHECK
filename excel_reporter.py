@@ -17,35 +17,52 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 
+try:
+    from .config import DIR_PROJECT_IMAGES, BASE_DIR
+except ImportError:
+    from config import DIR_PROJECT_IMAGES, BASE_DIR
+
+
 def export_reconciliation_excel(
     records: List[Dict[str, Any]],
     month_str: str,
-    output_dir: Path,
+    excel_output_dir: Path,
+    image_output_dir: Optional[Path] = None,
     is_test_mode: bool = True
 ) -> Path:
     """
-    Xuất báo cáo đối soát ra file Excel và lưu ảnh bóc tách vào thư mục output.
+    Xuất báo cáo đối soát ra file Excel và lưu ảnh bóc tách:
+      - File Excel báo cáo (.xlsx): Lưu tại excel_output_dir (trong thư mục Private).
+      - Ảnh hóa đơn bóc tách (.png): Lưu tại image_output_dir (trong thư mục Dự án / Project vì Private không lưu ảnh).
     """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # 1. Thư mục lưu ảnh bóc tách: Luôn lưu trong Project folder
+    if image_output_dir is None:
+        image_output_dir = DIR_PROJECT_IMAGES / month_str
+    image_output_dir = Path(image_output_dir)
+    image_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Thư mục lưu ảnh bóc tách local để người dùng tiện xem
-    img_export_dir = output_dir / f"extracted_images_{month_str}"
-    img_export_dir.mkdir(parents=True, exist_ok=True)
-
-    # Lưu ảnh ra thư mục
+    # Lưu ảnh ra thư mục dự án
     for r in records:
         raw_b = r.get("_raw_bytes")
         if raw_b:
             safe_name = r.get("SUBMITTER_NAME", "User").replace(" ", "_")
             p_name = r.get("PROVIDER", "AI")
             img_file_name = f"{r['ID']}_{safe_name}_{p_name}.png"
-            img_path = img_export_dir / img_file_name
+            img_path = image_output_dir / img_file_name
             with open(img_path, "wb") as f:
                 f.write(raw_b)
             r["_local_img_path"] = str(img_path.resolve())
 
-    # 2. Khởi tạo Workbook Excel
+    # 2. Thư mục lưu file Excel báo cáo: Thư mục Private (fallback dự phòng nếu private chưa có)
+    excel_output_dir = Path(excel_output_dir)
+    try:
+        excel_output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        fallback_dir = BASE_DIR / "output_debug"
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        excel_output_dir = fallback_dir
+
+    # 3. Khởi tạo Workbook Excel
     wb = openpyxl.Workbook()
 
     # --- SHEET 1: CHI TIẾT ĐỐI SOÁT ---
@@ -235,19 +252,25 @@ def export_reconciliation_excel(
     ws_detail.column_dimensions["L"].width = 16
     ws_detail.column_dimensions["M"].width = 40
 
-    # 3. Lưu file báo cáo
+    # 4. Lưu file báo cáo Excel vào thư mục Private
     tag = "TEST" if is_test_mode else "SYNCED"
     filename = f"Bao_cao_doi_soat_hoa_don_AI_{month_str}_{tag}.xlsx"
-    out_file_path = output_dir / filename
+    out_file_path = excel_output_dir / filename
 
     try:
         wb.save(out_file_path)
     except PermissionError:
         # Nếu file đang bị mở trong Excel
         filename_alt = f"Bao_cao_doi_soat_hoa_don_AI_{month_str}_{tag}_{int(datetime.now().timestamp())}.xlsx"
-        out_file_path = output_dir / filename_alt
+        out_file_path = excel_output_dir / filename_alt
         wb.save(out_file_path)
-    wb.close()
+    except Exception as e:
+        # Fallback lưu vào project folder nếu đường dẫn private bị lỗi
+        fallback_path = BASE_DIR / "output_debug" / filename
+        fallback_path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(fallback_path)
+        out_file_path = fallback_path
 
+    wb.close()
     return out_file_path
 

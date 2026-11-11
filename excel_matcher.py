@@ -146,15 +146,21 @@ def get_month_match_candidates(month_str: str) -> List[str]:
 def select_best_sheet_matcher(wb, file_path: Path):
     """
     Tự động chọn Sheet chính xác chứa dữ liệu bảng thanh toán File 2:
-    Ưu tiên sheet có chứa 'knoxid', 'name' hoặc từ khóa 'thanh toán', 'member', 'share'.
+    1. ƯU TIÊN TUYỆT ĐỐI: Sheet có tên 'Thanh toán' (hoặc 'thanh toan' / 'payment').
+    2. Sheet chứa 'knoxid', 'name' hoặc từ khóa 'member', 'share'.
+    3. Sheet active mặc định.
     """
+    # 1. Kiểm tra sheet chuẩn 'Thanh toán' trước tiên
+    for sname in wb.sheetnames:
+        s_clean = normalize_name(sname)
+        if "thanh toán" in s_clean or "thanh toan" in s_clean or "payment" in s_clean:
+            return wb[sname]
+
     sheet_scores = []
     for sname in wb.sheetnames:
         score = 0
         s_lower = sname.lower()
-        if any(k in s_lower for k in ["thanh toán", "thanh toan", "payment"]):
-            score += 30
-        elif any(k in s_lower for k in ["member", "share", "crew", "ai"]):
+        if any(k in s_lower for k in ["member", "share", "crew", "ai"]):
             score += 20
 
         # Kiểm tra nội dung 5 dòng đầu
@@ -214,13 +220,30 @@ class ExcelDataMatcher:
         print(f"   - Danh sách sheet: {wb.sheetnames}")
         print(f"   - Sheet được chọn: '{ws.title}' (Tổng {ws.max_row} dòng, {ws.max_column} cột)")
 
-        # 1. Quét tìm vị trí các cột định danh: KnoxID, Name, Email (cột Thanh toán)
+        # 1. Dò tìm vị trí bắt đầu của các cột Tháng (Aug-26, Sep-26, Oct-26...)
+        first_month_col = None
+        for c in range(1, ws.max_column + 1):
+            for r in range(1, 4):
+                v_raw = ws.cell(r, c).value
+                if isinstance(v_raw, datetime):
+                    first_month_col = c
+                    break
+                v_str = str(v_raw or "").strip().lower()
+                if re.match(r'^[A-Za-z]{3}-\d{2}$', v_str) or any(m in v_str for m in ["aug-26", "sep-26", "oct-26", "nov-26", "dec-26"]):
+                    first_month_col = c
+                    break
+            if first_month_col:
+                break
+
+        # 2. Quét tìm vị trí các cột định danh: KnoxID, Name, và cột 'Thanh toán' (nằm trước cột tháng)
         col_knoxid = None
         col_name = None
         col_email = None
+        account_email_cols = []
+        scan_end_for_info = first_month_col if first_month_col else ws.max_column + 1
 
         for r in range(1, min(6, ws.max_row + 1)):
-            for c in range(1, ws.max_column + 1):
+            for c in range(1, scan_end_for_info):
                 cell_val = str(ws.cell(r, c).value or "").strip()
                 cell_lower = cell_val.lower()
 
@@ -228,19 +251,25 @@ class ExcelDataMatcher:
                     col_knoxid = c
                 elif cell_lower in ["name", "họ và tên", "ho va ten", "họ tên"] and not col_name:
                     col_name = c
-                elif "thanh toán" in cell_lower and not col_email and r <= 3:
-                    # Cột email nằm dưới nhóm Gemini Pro / Đăng nhập / Thanh toán
-                    col_email = c
+                elif ("thanh toán" in cell_lower or "thanh toan" in cell_lower) and r <= 3:
+                    if c not in account_email_cols:
+                        account_email_cols.append(c)
+
+        if account_email_cols:
+            # Ưu tiên cột thanh toán tài khoản (như Gemini Pro / ChatGPT Plus / Claude Pro -> Thanh toán)
+            col_email = account_email_cols[-1]
 
         # Mặc định fallback nếu không thấy cột tên
         if not col_name:
             col_name = 3
         if not col_knoxid:
             col_knoxid = 2
+        if not col_email:
+            col_email = 5
 
-        print(f"   - Cột định danh nhận diện: KnoxID=Cột {col_knoxid}, Họ tên=Cột {col_name}, Email=Cột {col_email or 5}")
+        print(f"   - Cột định danh nhận diện: KnoxID=Cột {col_knoxid}, Họ tên=Cột {col_name}, Cột Email Thanh toán=Cột {col_email} (tất cả cột email: {account_email_cols or [col_email]})")
 
-        # 2. Định vị cột Tháng mục tiêu
+        # 3. Định vị cột Tháng mục tiêu (ví dụ '2026-08' -> 'Aug-26')
         month_candidates = get_month_match_candidates(self.month_str)
         month_start_col = None
         month_row = 1
@@ -248,7 +277,17 @@ class ExcelDataMatcher:
         # Dò tìm cột tháng trong các dòng header (Dòng 1 đến dòng 3)
         for r in range(1, 4):
             for c in range(1, ws.max_column + 1):
-                val = str(ws.cell(r, c).value or "").strip().lower()
+                val_raw = ws.cell(r, c).value
+                if isinstance(val_raw, datetime):
+                    val_dt_str = val_raw.strftime("%Y-%m")
+                    val_dt_mon = val_raw.strftime("%b-%y").lower()
+                    if val_dt_str in month_candidates or val_dt_mon in month_candidates:
+                        month_start_col = c
+                        month_row = r
+                        print(f"🎯 [ExcelMatcher] Tìm thấy cột Tháng (Date: {val_dt_mon}) tại Dòng {r}, Cột {c}")
+                        break
+
+                val = str(val_raw or "").strip().lower()
                 if not val:
                     continue
                 if any(cand == val or f" {cand} " in f" {val} " or val.startswith(cand) for cand in month_candidates):
@@ -272,7 +311,7 @@ class ExcelDataMatcher:
             print("⚠️ [ExcelMatcher Warning] Không tìm thấy cột Tháng tương ứng trong File 2! Mặc định dò tìm các cột có tên dịch vụ.")
             month_start_col = 6
 
-        # 3. Xác định phạm vi các cột con của tháng này (tránh quét lấn sang tháng sau)
+        # 4. Xác định phạm vi các cột con của tháng này (tránh quét lấn sang tháng sau)
         # Kiểm tra merged cell tại (month_row, month_start_col)
         month_end_col = month_start_col + 5
         for mrange in ws.merged_cells.ranges:
@@ -283,7 +322,7 @@ class ExcelDataMatcher:
         # Đảm bảo không vượt quá max_column
         month_end_col = min(month_end_col, ws.max_column)
 
-        # 4. Ánh xạ các cột nhà cung cấp (ChatGPT, Claude, Gemini) trong phạm vi tháng
+        # 5. Ánh xạ các cột nhà cung cấp (ChatGPT, Claude, Gemini) trong phạm vi tháng
         target_month_col_map = {}
         for c in range(month_start_col, month_end_col + 1):
             # Thu thập tiêu đề con ở các dòng (month_row, month_row + 1, month_row + 2)
@@ -304,9 +343,9 @@ class ExcelDataMatcher:
                         target_month_col_map[p_key] = c
                         break
 
-        print(f"📊 [ExcelMatcher] Ánh xạ cột đơn giá: {target_month_col_map}")
+        print(f"📊 [ExcelMatcher] Ánh xạ cột đơn giá tháng {self.month_str}: {target_month_col_map}")
 
-        # 5. Đọc danh sách nhân sự và số tiền
+        # 6. Đọc danh sách nhân sự và số tiền
         users_dict = {}
         data_start_row = month_row + 2
 
@@ -320,7 +359,19 @@ class ExcelDataMatcher:
                 continue
 
             knox_id = str(ws.cell(r, col_knoxid).value or "").strip()
-            email_val = clean_email(ws.cell(r, col_email or 5).value)
+
+            # Lấy email thanh toán: quét qua các cột account_email_cols nếu có
+            raw_email_str = ""
+            if account_email_cols:
+                for c_em in account_email_cols:
+                    v_em = ws.cell(r, c_em).value
+                    if v_em and str(v_em).strip() not in ["", "-", "nan", "None", "0"]:
+                        raw_email_str = str(v_em).strip()
+                        break
+            if not raw_email_str:
+                raw_email_str = str(ws.cell(r, col_email).value or "").strip()
+
+            email_val = clean_email(raw_email_str)
 
             # Lấy đơn giá từng dịch vụ
             amounts = {}

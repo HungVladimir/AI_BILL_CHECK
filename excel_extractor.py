@@ -52,11 +52,24 @@ def get_cell_effective_value(ws, row: int, col: int) -> str:
 
 def select_best_sheet(wb, file_path: Path):
     """
-    Tự động chọn Sheet chính xác chứa dữ liệu hóa đơn:
-    1. Sheet có tên chứa từ khóa: 'thanh toán', 'hóa đơn', 'crew', 'bill', hoặc tháng/năm.
-    2. Sheet có nhiều dòng và có cột 'Họ và tên'.
-    3. Sheet active mặc định.
+    Tự động chọn Sheet chính xác chứa dữ liệu hóa đơn trong File 1:
+    1. ƯU TIÊN TUYỆT ĐỐI: Sheet có tên 'Tổng hợp hóa đơn' (hoặc 'tong hop hoa don').
+    2. Sheet có tên chứa từ khóa 'tổng hợp' hoặc 'tong hop'.
+    3. Sheet có tên chứa từ khóa: 'thanh toán', 'hóa đơn', 'crew', 'bill', hoặc tháng/năm.
+    4. Sheet có nhiều dòng và có cột 'Họ và tên'.
+    5. Sheet active mặc định.
     """
+    # 1. Kiểm tra sheet chuẩn 'Tổng hợp hóa đơn' trước tiên
+    for sname in wb.sheetnames:
+        s_clean = normalize_text(sname).lower()
+        if "tổng hợp hóa đơn" in s_clean or "tong hop hoa don" in s_clean:
+            return wb[sname]
+
+    for sname in wb.sheetnames:
+        s_clean = normalize_text(sname).lower()
+        if "tổng hợp" in s_clean or "tong hop" in s_clean:
+            return wb[sname]
+
     sheet_scores = []
     clean_name = file_path.name.lower()
 

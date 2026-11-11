@@ -42,7 +42,8 @@ try:
         AI_BILL_PRIVATE_DIR,
         DIR_EXCEL1,
         DIR_EXCEL2,
-        DIR_OUTPUT,
+        DIR_EXCEL_OUTPUT,
+        DIR_PROJECT_IMAGES,
         TABLE_NAME,
         MINIO_BUCKET_NAME,
         MINIO_PREFIX,
@@ -60,7 +61,8 @@ except ImportError:
         AI_BILL_PRIVATE_DIR,
         DIR_EXCEL1,
         DIR_EXCEL2,
-        DIR_OUTPUT,
+        DIR_EXCEL_OUTPUT,
+        DIR_PROJECT_IMAGES,
         TABLE_NAME,
         MINIO_BUCKET_NAME,
         MINIO_PREFIX,
@@ -111,7 +113,7 @@ def main():
     target_private_dir = Path(args.dir.strip().strip('"').strip("'")) if args.dir else AI_BILL_PRIVATE_DIR
     print(f"📁 Thư mục Private cấu hình: {target_private_dir}")
 
-    auto_f1, auto_f2, output_dir = locate_ai_bill_files(target_private_dir, target_month=args.month)
+    auto_f1, auto_f2, excel_out_dir, img_out_dir = locate_ai_bill_files(target_private_dir, target_month=args.month)
 
     # Ưu tiên tham số truyền tay nếu có
     f1_path = Path(args.file1.strip().strip('"').strip("'")) if args.file1 else auto_f1
@@ -120,7 +122,7 @@ def main():
     # Nếu vẫn chưa tìm thấy trong Private, fallback tìm trong thư mục cục bộ input/
     if not f1_path or not f2_path:
         local_input = BASE_DIR / "input"
-        loc_f1, loc_f2, _ = locate_ai_bill_files(local_input, target_month=args.month)
+        loc_f1, loc_f2, _, _ = locate_ai_bill_files(local_input, target_month=args.month)
         f1_path = f1_path or loc_f1
         f2_path = f2_path or loc_f2
 
@@ -160,8 +162,11 @@ def main():
     month = args.month or extract_month_from_filename(f1_path.name)
     print(f"📅 Tháng thanh toán xác định: {month}")
 
-    # Đảm bảo thư mục output_reports trong Private tồn tại
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Đảm bảo thư mục output_reports trong Private tồn tại (để lưu file Excel)
+    excel_out_dir.mkdir(parents=True, exist_ok=True)
+    # Thư mục lưu ảnh: Luôn nằm trong Project folder
+    img_month_dir = DIR_PROJECT_IMAGES / month
+    img_month_dir.mkdir(parents=True, exist_ok=True)
 
     # 3. BƯỚC 1: Trích xuất ảnh RAW từ File 1
     print("\n" + "-" * 75)
@@ -195,7 +200,8 @@ def main():
         print("BƯỚC 3: XỬ LÝ KIỂM THỬ (TEST MODE) - BỎ QUA GHI MINIO & DATABASE")
         print("-" * 75)
         print("   🔒 [An toàn] Chế độ TEST không can thiệp vào MinIO S3 hay cơ sở dữ liệu.")
-        print(f"   📊 Đang tạo Báo cáo đối soát Excel và lưu ảnh bóc tách vào thư mục Private...")
+        print(f"   📊 File báo cáo Excel sẽ được lưu vào thư mục Private: {excel_out_dir}")
+        print(f"   📸 Toàn bộ ảnh hóa đơn bóc tách sẽ lưu vào Project folder: {img_month_dir}")
     else:
         # 5.1 Upload MinIO thật
         print("\n" + "-" * 75)
@@ -206,7 +212,7 @@ def main():
             minio_uploader.upload_image(
                 object_key=rec["FILE_PATH"],
                 raw_bytes=rec["_raw_bytes"],
-                output_debug_dir=output_dir
+                output_debug_dir=img_month_dir
             )
 
         # 5.2 Insert Oracle Database thật
@@ -221,21 +227,22 @@ def main():
         )
         db_syncer.close()
 
-    # 6. BƯỚC CUỐI: Xuất Báo cáo đối soát Excel ra thư mục Private
+    # 6. BƯỚC CUỐI: Xuất Báo cáo đối soát Excel ra thư mục Private & Ảnh vào Project
     print("\n" + "-" * 75)
-    print("BƯỚC CUỐI: XUẤT BÁO CÁO ĐỐI SOÁT EXCEL VÀO THƯ MỤC PRIVATE")
+    print("BƯỚC CUỐI: XUẤT BÁO CÁO ĐỐI SOÁT EXCEL VÀO PRIVATE & ẢNH VÀO PROJECT")
     print("-" * 75)
     excel_report_path = export_reconciliation_excel(
         records=records,
         month_str=month,
-        output_dir=output_dir,
+        excel_output_dir=excel_out_dir,
+        image_output_dir=img_month_dir,
         is_test_mode=is_test_mode
     )
 
-    print(f"📊 [Báo cáo Excel] Đã tạo thành công:")
+    print(f"📊 [Báo cáo Excel] Đã tạo thành công trong thư mục Private:")
     print(f"   👉 {excel_report_path}")
-    print(f"📸 [Thư mục ảnh] Đã bóc tách {len(records)} ảnh gốc vào:")
-    print(f"   👉 {output_dir / f'extracted_images_{month}'}")
+    print(f"📸 [Thư mục ảnh] Đã bóc tách {len(records)} ảnh gốc vào thư mục Dự án:")
+    print(f"   👉 {img_month_dir}")
 
     print("\n" + "=" * 75)
     if is_test_mode:
