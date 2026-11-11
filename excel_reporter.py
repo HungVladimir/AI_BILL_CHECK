@@ -36,21 +36,23 @@ def export_reconciliation_excel(
       - Ảnh hóa đơn bóc tách (.png): Lưu tại image_output_dir (trong thư mục Dự án / Project vì Private không lưu ảnh).
     """
     # 1. Thư mục lưu ảnh bóc tách: Luôn lưu trong Project folder
-    if image_output_dir is None:
-        image_output_dir = DIR_PROJECT_IMAGES / month_str
-    image_output_dir = Path(image_output_dir)
-    image_output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Lưu ảnh ra thư mục dự án
+    # Lưu ảnh ra thư mục dự án theo từng tháng của bản ghi
     for r in records:
         raw_b = r.get("_raw_bytes")
         if raw_b:
+            rec_month = r.get("MONTH") or month_str
+            month_img_dir = (image_output_dir / rec_month) if image_output_dir else (DIR_PROJECT_IMAGES / rec_month)
+            month_img_dir.mkdir(parents=True, exist_ok=True)
             safe_name = r.get("SUBMITTER_NAME", "User").replace(" ", "_")
             p_name = r.get("PROVIDER", "AI")
             img_file_name = f"{r['ID']}_{safe_name}_{p_name}.png"
-            img_path = image_output_dir / img_file_name
-            with open(img_path, "wb") as f:
-                f.write(raw_b)
+            img_path = month_img_dir / img_file_name
+            try:
+                if not img_path.exists() or img_path.stat().st_size == 0:
+                    with open(img_path, "wb") as f:
+                        f.write(raw_b)
+            except Exception:
+                pass
             r["_local_img_path"] = str(img_path.resolve())
 
     # 2. Thư mục lưu file Excel báo cáo: Thư mục Private (fallback dự phòng nếu private chưa có)
@@ -169,29 +171,104 @@ def export_reconciliation_excel(
             if col_idx == 19:
                 cell.fill = fill_ok
 
+    # Phân tích danh sách các tháng trong records
+    distinct_months = sorted(list(set(str(r.get("MONTH", month_str)).strip() for r in records if r.get("MONTH"))))
+    is_multi_month = len(distinct_months) > 1
+
     # --- SHEET 2: TỔNG HỢP KPI & CHI PHÍ ---
     ws_kpi = wb.create_sheet(title="Tổng hợp chi phí")
     ws_kpi.views.sheetView[0].showGridLines = True
 
     font_title = Font(name="Calibri", size=14, bold=True, color="1F497D")
+    font_section = Font(name="Calibri", size=11, bold=True, color="1F497D")
     font_sub = Font(name="Calibri", size=10, italic=True, color="595959")
 
-    ws_kpi["A1"] = f"TỔNG HỢP CHI PHÍ AI CREW - THÁNG {month_str}"
+    if is_multi_month:
+        title_text = f"TỔNG HỢP CHI PHÍ AI CREW - TOÀN BỘ CÁC THÁNG ({distinct_months[0]} -> {distinct_months[-1]})"
+    else:
+        title_text = f"TỔNG HỢP CHI PHÍ AI CREW - THÁNG {month_str}"
+
+    ws_kpi["A1"] = title_text
     ws_kpi["A1"].font = font_title
-    ws_kpi["A2"] = f"Thời gian lập: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Tổng số hóa đơn: {len(records)}"
+    ws_kpi["A2"] = f"Thời gian lập: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Tổng số hóa đơn: {len(records)} | Số tháng đối soát: {len(distinct_months)}"
     ws_kpi["A2"].font = font_sub
+
+    total_amount = sum(r.get("AMOUNT", 0) for r in records)
+    current_kpi_row = 4
+
+    # Nếu có nhiều tháng: Thêm BẢNG 1: TỔNG HỢP THEO TỪNG THÁNG
+    if is_multi_month:
+        ws_kpi.cell(row=current_kpi_row, column=1, value="1. TỔNG HỢP CHI PHÍ THEO TỪNG THÁNG").font = font_section
+        current_kpi_row += 1
+
+        month_headers = ["STT", "Tháng thanh toán", "Số lượng hóa đơn", "Tổng tiền (VNĐ)", "Tỷ trọng"]
+        for c_idx, h in enumerate(month_headers, start=1):
+            cell = ws_kpi.cell(row=current_kpi_row, column=c_idx, value=h)
+            cell.font = font_header
+            cell.fill = fill_header_kpi
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws_kpi.row_dimensions[current_kpi_row].height = 24
+        current_kpi_row += 1
+
+        # Gom thống kê theo tháng
+        month_stats = {}
+        for r in records:
+            m = r.get("MONTH", month_str)
+            amt = r.get("AMOUNT", 0)
+            if m not in month_stats:
+                month_stats[m] = {"count": 0, "amount": 0}
+            month_stats[m]["count"] += 1
+            month_stats[m]["amount"] += amt
+
+        for idx, (m_name, stat) in enumerate(sorted(month_stats.items()), start=1):
+            amt = stat["amount"]
+            ratio = (amt / total_amount) if total_amount > 0 else 0
+
+            ws_kpi.cell(row=current_kpi_row, column=1, value=idx).alignment = Alignment(horizontal="center")
+            ws_kpi.cell(row=current_kpi_row, column=2, value=m_name).alignment = Alignment(horizontal="center")
+            ws_kpi.cell(row=current_kpi_row, column=3, value=stat["count"]).alignment = Alignment(horizontal="center")
+
+            amt_cell = ws_kpi.cell(row=current_kpi_row, column=4, value=amt)
+            amt_cell.number_format = '#,##0" đ"'
+            amt_cell.alignment = Alignment(horizontal="right")
+
+            ratio_cell = ws_kpi.cell(row=current_kpi_row, column=5, value=ratio)
+            ratio_cell.number_format = '0.0%'
+            ratio_cell.alignment = Alignment(horizontal="right")
+
+            for c in range(1, 6):
+                ws_kpi.cell(row=current_kpi_row, column=c).border = thin_border
+            current_kpi_row += 1
+
+        # Dòng tổng cộng tháng
+        ws_kpi.cell(row=current_kpi_row, column=2, value="TỔNG CỘNG").font = Font(name="Calibri", bold=True)
+        ws_kpi.cell(row=current_kpi_row, column=3, value=len(records)).font = Font(name="Calibri", bold=True)
+        ws_kpi.cell(row=current_kpi_row, column=3).alignment = Alignment(horizontal="center")
+        total_cell = ws_kpi.cell(row=current_kpi_row, column=4, value=total_amount)
+        total_cell.font = Font(name="Calibri", bold=True)
+        total_cell.number_format = '#,##0" đ"'
+        total_cell.alignment = Alignment(horizontal="right")
+
+        for c in range(1, 6):
+            ws_kpi.cell(row=current_kpi_row, column=c).border = thin_border
+        current_kpi_row += 3  # Cách 2 dòng cho bảng tiếp theo
+
+    # BẢNG TỔNG HỢP THEO NHÀ CUNG CẤP AI
+    provider_title = "2. TỔNG HỢP CHI PHÍ THEO NHÀ CUNG CẤP AI" if is_multi_month else "TỔNG HỢP CHI PHÍ THEO NHÀ CUNG CẤP AI"
+    ws_kpi.cell(row=current_kpi_row, column=1, value=provider_title).font = font_section
+    current_kpi_row += 1
 
     kpi_headers = ["STT", "Nhà cung cấp", "Số lượng hóa đơn", "Tổng tiền (VNĐ)", "Tỷ trọng"]
     for c_idx, h in enumerate(kpi_headers, start=1):
-        cell = ws_kpi.cell(row=4, column=c_idx, value=h)
+        cell = ws_kpi.cell(row=current_kpi_row, column=c_idx, value=h)
         cell.font = font_header
         cell.fill = fill_header_kpi
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    ws_kpi.row_dimensions[4].height = 24
+    ws_kpi.row_dimensions[current_kpi_row].height = 24
+    current_kpi_row += 1
 
-    # Tính toán KPI
+    # Tính toán KPI Nhà cung cấp
     provider_stats = {}
-    total_amount = sum(r.get("AMOUNT", 0) for r in records)
     for r in records:
         p = r.get("PROVIDER", "Khác")
         amt = r.get("AMOUNT", 0)
@@ -200,38 +277,37 @@ def export_reconciliation_excel(
         provider_stats[p]["count"] += 1
         provider_stats[p]["amount"] += amt
 
-    kpi_row = 5
     for idx, (p_name, stat) in enumerate(provider_stats.items(), start=1):
         amt = stat["amount"]
         ratio = (amt / total_amount) if total_amount > 0 else 0
 
-        ws_kpi.cell(row=kpi_row, column=1, value=idx).alignment = Alignment(horizontal="center")
-        ws_kpi.cell(row=kpi_row, column=2, value=p_name).alignment = Alignment(horizontal="left")
-        ws_kpi.cell(row=kpi_row, column=3, value=stat["count"]).alignment = Alignment(horizontal="center")
+        ws_kpi.cell(row=current_kpi_row, column=1, value=idx).alignment = Alignment(horizontal="center")
+        ws_kpi.cell(row=current_kpi_row, column=2, value=p_name).alignment = Alignment(horizontal="left")
+        ws_kpi.cell(row=current_kpi_row, column=3, value=stat["count"]).alignment = Alignment(horizontal="center")
 
-        amt_cell = ws_kpi.cell(row=kpi_row, column=4, value=amt)
+        amt_cell = ws_kpi.cell(row=current_kpi_row, column=4, value=amt)
         amt_cell.number_format = '#,##0" đ"'
         amt_cell.alignment = Alignment(horizontal="right")
 
-        ratio_cell = ws_kpi.cell(row=kpi_row, column=5, value=ratio)
+        ratio_cell = ws_kpi.cell(row=current_kpi_row, column=5, value=ratio)
         ratio_cell.number_format = '0.0%'
         ratio_cell.alignment = Alignment(horizontal="right")
 
         for c in range(1, 6):
-            ws_kpi.cell(row=kpi_row, column=c).border = thin_border
-        kpi_row += 1
+            ws_kpi.cell(row=current_kpi_row, column=c).border = thin_border
+        current_kpi_row += 1
 
-    # Dòng Tổng cộng
-    ws_kpi.cell(row=kpi_row, column=2, value="TỔNG CỘNG").font = Font(name="Calibri", bold=True)
-    ws_kpi.cell(row=kpi_row, column=3, value=len(records)).font = Font(name="Calibri", bold=True)
-    ws_kpi.cell(row=kpi_row, column=3).alignment = Alignment(horizontal="center")
-    total_cell = ws_kpi.cell(row=kpi_row, column=4, value=total_amount)
+    # Dòng Tổng cộng nhà cung cấp
+    ws_kpi.cell(row=current_kpi_row, column=2, value="TỔNG CỘNG").font = Font(name="Calibri", bold=True)
+    ws_kpi.cell(row=current_kpi_row, column=3, value=len(records)).font = Font(name="Calibri", bold=True)
+    ws_kpi.cell(row=current_kpi_row, column=3).alignment = Alignment(horizontal="center")
+    total_cell = ws_kpi.cell(row=current_kpi_row, column=4, value=total_amount)
     total_cell.font = Font(name="Calibri", bold=True)
     total_cell.number_format = '#,##0" đ"'
     total_cell.alignment = Alignment(horizontal="right")
 
     for c in range(1, 6):
-        ws_kpi.cell(row=kpi_row, column=c).border = thin_border
+        ws_kpi.cell(row=current_kpi_row, column=c).border = thin_border
 
     # Tự động canh độ rộng cột cho cả 2 sheet
     for sheet in [ws_detail, ws_kpi]:
@@ -276,7 +352,10 @@ def export_reconciliation_excel(
 
     # 4. Lưu file báo cáo Excel vào thư mục Private
     tag = "TEST" if is_test_mode else "SYNCED"
-    filename = f"Bao_cao_doi_soat_hoa_don_AI_{month_str}_{tag}.xlsx"
+    if is_multi_month:
+        filename = f"Bao_cao_tong_hop_doi_soat_hoa_don_AI_{distinct_months[0]}_den_{distinct_months[-1]}_{tag}.xlsx"
+    else:
+        filename = f"Bao_cao_doi_soat_hoa_don_AI_{month_str}_{tag}.xlsx"
     out_file_path = excel_output_dir / filename
 
     try:

@@ -257,3 +257,95 @@ def locate_ai_bill_files(
     return selected_f1, selected_f2, dir_excel_out, dir_img_out
 
 
+def locate_batch_ai_bill_files(
+    private_dir: Path = AI_BILL_PRIVATE_DIR,
+    folder1: Optional[Path] = None,
+    folder2: Optional[Path] = None,
+    target_month: Optional[str] = None
+) -> Tuple[List[Tuple[Path, str]], Optional[Path], Path, Path]:
+    """
+    Dò tìm toàn bộ các file Excel 1 theo từng tháng và File Excel 2:
+    - Folder 1: chứa các file excel1 của từng tháng (mặc định private_dir / 'invoices_file1')
+    - Folder 2: chứa file excel2 tổng hợp các tháng (mặc định private_dir / 'members_file2')
+    
+    Trả về:
+      - file1_list: Danh sách tuple [(file_path, month_str), ...] sắp xếp theo thứ tự tháng tăng dần
+      - file2_path: Đường dẫn file Excel 2 tổng hợp
+      - dir_excel_output: Thư mục xuất báo cáo (output_reports/)
+      - dir_project_images: Thư mục xuất ảnh trong project (extracted_images/)
+    """
+    private_dir = Path(private_dir)
+    dir_f1 = Path(folder1) if folder1 else (private_dir / "invoices_file1")
+    dir_f2 = Path(folder2) if folder2 else (private_dir / "members_file2")
+    dir_excel_out = private_dir / "output_reports"
+    dir_img_out = DIR_PROJECT_IMAGES
+
+    # Đảm bảo các thư mục tồn tại
+    try:
+        dir_f1.mkdir(parents=True, exist_ok=True)
+        dir_f2.mkdir(parents=True, exist_ok=True)
+        dir_excel_out.mkdir(parents=True, exist_ok=True)
+        dir_img_out.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    # 1. Tìm tất cả các file Excel 1 trong dir_f1 (hoặc private_dir)
+    scan_dirs_f1 = [dir_f1]
+    if private_dir != dir_f1 and private_dir.exists():
+        scan_dirs_f1.append(private_dir)
+
+    f1_candidates = []
+    seen_f1_names = set()
+    for sdir in scan_dirs_f1:
+        if sdir.exists():
+            for f in sorted(list(sdir.glob("*.xlsx")) + list(sdir.glob("*.xls"))):
+                if f.name.startswith("~$") or "bao_cao" in f.name.lower() or "report" in f.name.lower():
+                    continue
+                if f.name in seen_f1_names:
+                    continue
+                name_l = f.name.lower()
+                # Nếu file nằm trực tiếp trong invoices_file1 thì nhận mọi file excel (trừ báo cáo)
+                # Nếu nằm ở private_dir chung thì phải có từ khóa hóa đơn/crew/bill/tháng
+                if sdir == dir_f1 or any(k in name_l for k in ["thanh toán hóa đơn", "hóa đơn", "crew", "bill", "tháng", "thang"]):
+                    m_str = extract_month_from_filename(f.name)
+                    if target_month:
+                        m_clean = target_month.replace("-", "").replace(".", "")
+                        if target_month != m_str and m_clean not in f.name:
+                            continue
+                    seen_f1_names.add(f.name)
+                    f1_candidates.append((f, m_str))
+
+    # Sắp xếp theo thứ tự tháng tăng dần (ví dụ: 2026-08, 2026-09, 2026-10)
+    f1_candidates.sort(key=lambda item: item[1])
+
+    # 2. Tìm File 2 trong dir_f2 (hoặc private_dir)
+    scan_dirs_f2 = [dir_f2]
+    if private_dir != dir_f2 and private_dir.exists():
+        scan_dirs_f2.append(private_dir)
+
+    f2_candidates = []
+    for sdir in scan_dirs_f2:
+        if sdir.exists():
+            for f in sdir.glob("*.xlsx"):
+                if f.name.startswith("~$") or "bao_cao" in f.name.lower() or "report" in f.name.lower():
+                    continue
+                name_l = f.name.lower()
+                if sdir == dir_f2 or any(k in name_l for k in ["member", "share", "chi tiết", "payment", "knox", "boq"]):
+                    f2_candidates.append(f)
+
+    # Ưu tiên file có từ khóa 'chi tiết', 'thanh toán', 'member', 'share'
+    selected_f2 = None
+    if f2_candidates:
+        def f2_priority(p: Path):
+            nl = p.name.lower()
+            if "chi tiết" in nl or "chi tiet" in nl: return 0
+            if "thanh toán" in nl or "thanh toan" in nl: return 1
+            if "member" in nl or "share" in nl: return 2
+            return 3
+        f2_candidates.sort(key=f2_priority)
+        selected_f2 = f2_candidates[0]
+
+    return f1_candidates, selected_f2, dir_excel_out, dir_img_out
+
+
+

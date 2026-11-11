@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import extract_month_from_filename, convert_month_to_excel2_header
+from config import extract_month_from_filename, convert_month_to_excel2_header, locate_batch_ai_bill_files
 from excel_extractor import ExcelImageExtractor
 from excel_matcher import ExcelDataMatcher
 from excel_reporter import export_reconciliation_excel
@@ -247,8 +247,104 @@ def test_full_pipeline():
 
     print("✅ 8. Kiểm tra File Excel Báo cáo với 22 Cột chuẩn Database: ĐẠT")
 
+    # 9. KIỂM THỬ TÍNH NĂNG MỚI: BATCH PROCESSING ĐA THÁNG TỪ 2 FOLDER
     print("\n" + "=" * 60)
-    print("🎉 TOÀN BỘ 8 BƯỚC KIỂM THỬ ĐÃ THÀNH CÔNG 100%!")
+    print("🚀 9. KIỂM THỬ BATCH PROCESSING ĐA THÁNG (FOLDER 1 & FOLDER 2)")
+    print("=" * 60)
+    batch_dir = test_dir / "batch_test"
+    f1_dir = batch_dir / "invoices_file1"
+    f2_dir = batch_dir / "members_file2"
+    out_dir = batch_dir / "output_reports"
+    img_dir = batch_dir / "extracted_images"
+    f1_dir.mkdir(parents=True, exist_ok=True)
+    f2_dir.mkdir(parents=True, exist_ok=True)
+
+    # 9.1 Tạo 3 file Excel 1 cho Tháng 8, Tháng 9, Tháng 10 trong Folder 1
+    months_to_create = ["2026-08", "2026-09", "2026-10"]
+    created_f1_paths = []
+    for m in months_to_create:
+        wb_m = openpyxl.Workbook()
+        ws_m = wb_m.active
+        ws_m.title = "Tổng hợp hóa đơn"
+        ws_m.append(["STT", "Họ và Tên", "GenID", "Team", "Group", "Part", "Hóa đơn ChatGPT", "Hóa đơn Claude", "Số tiền thanh toán", "Tiêu chuẩn thanh toán"])
+        ws_m.append([1, "Nguyễn Thị Kim Ngân", "24420206", "DTM Team", "DTM Group", "", "", "", 499000, 1200000])
+        ws_m.append([2, "Chu Thị Thảo Nga", "16425218", "DTM Team", "DTM Group", "", "", "", 0, 1200000])
+        ws_m.append([3, "Nguyễn Hữu Đồng", "17439982", "EHS Team", "EHS Group", "", "", "", 1082222, 1200000])
+
+        ws_m.add_image(OpenpyxlImage(make_dummy_img(f"GPT_KN_{m}", (34, 139, 34))), "G2")
+        ws_m.add_image(OpenpyxlImage(make_dummy_img(f"GPT_HD_{m}", (34, 139, 34))), "G4")
+        ws_m.add_image(OpenpyxlImage(make_dummy_img(f"CLD_HD_{m}", (210, 105, 30))), "H4")
+
+        f_path = f1_dir / f"(AI Crew) thanh toán hóa đơn tháng {m}.xlsx"
+        wb_m.save(f_path)
+        wb_m.close()
+        created_f1_paths.append(f_path)
+
+    # 9.2 Đặt File 2 tổng hợp vào Folder 2
+    f2_dest = f2_dir / "Chi tiết thanh toán tổng hợp.xlsx"
+    import shutil
+    shutil.copy(test_f2, f2_dest)
+
+    # 9.3 Dò tìm bằng locate_batch_ai_bill_files
+    f1_list, found_f2, _, _ = locate_batch_ai_bill_files(
+        private_dir=batch_dir,
+        folder1=f1_dir,
+        folder2=f2_dir
+    )
+    assert len(f1_list) == 3, f"Kỳ vọng 3 file trong Folder 1, thực tế {len(f1_list)}"
+    assert found_f2 == f2_dest, f"File 2 tìm được không khớp: {found_f2}"
+    assert [item[1] for item in f1_list] == ["2026-08", "2026-09", "2026-10"], "Thứ tự tháng phải được sắp xếp tăng dần"
+    print(f"✅ 9.1 Dò tìm tự động Folder 1 ({len(f1_list)} files) và File 2 tổng hợp: ĐẠT")
+
+    # 9.4 Tiến hành vòng lặp xử lý từng file và đối soát theo từng tháng
+    matcher_batch = ExcelDataMatcher(str(found_f2))
+    matcher_batch.load_users_data()
+    all_batch_records = []
+    month_summary = {}
+
+    for f_item, m_item in f1_list:
+        ext_item = ExcelImageExtractor(str(f_item))
+        invs_item = ext_item.extract_invoices()
+        recs_item = matcher_batch.pair_and_build_records(invs_item, month_override=m_item)
+        assert len(recs_item) == 3, f"Mỗi file phải bóc tách đúng 3 hóa đơn"
+        for r in recs_item:
+            assert r["MONTH"] == m_item
+            assert r["FILE_PATH"].startswith(f"aibill/{m_item}/")
+        all_batch_records.extend(recs_item)
+        month_summary[m_item] = len(recs_item)
+
+    assert len(all_batch_records) == 9, f"Kỳ vọng 9 bản ghi tổng hợp từ 3 tháng, thực tế {len(all_batch_records)}"
+    print(f"✅ 9.2 Xử lý bóc tách từng tháng & ghép giá tương ứng (9 bản ghi): ĐẠT")
+
+    # 9.5 Xuất 1 file Báo cáo tổng hợp duy nhất
+    rep_batch_path = export_reconciliation_excel(
+        records=all_batch_records,
+        month_str="2026-08_den_2026-10",
+        excel_output_dir=out_dir,
+        image_output_dir=img_dir,
+        is_test_mode=True
+    )
+    assert rep_batch_path.exists(), "File báo cáo tổng hợp phải tồn tại"
+    assert "2026-08_den_2026-10" in rep_batch_path.name
+
+    # 9.6 Đọc lại file Excel báo cáo tổng hợp và kiểm tra nội dung
+    wb_batch_rep = openpyxl.load_workbook(rep_batch_path)
+    ws_rep_check = wb_batch_rep["AI_INVOICE_CHECK"]
+    assert ws_rep_check.max_row == 10, f"Sheet AI_INVOICE_CHECK phải có 10 dòng (1 header + 9 records), thực tế: {ws_rep_check.max_row}"
+
+    # Kiểm tra cột MONTH trong Sheet 1 chứa đủ 3 tháng
+    rep_months = set(ws_rep_check.cell(r, 3).value for r in range(2, 11))
+    assert rep_months == {"2026-08", "2026-09", "2026-10"}, f"Thiếu tháng trong báo cáo: {rep_months}"
+
+    # Kiểm tra Sheet KPI có bảng tổng hợp theo tháng
+    ws_kpi_check = wb_batch_rep["Tổng hợp chi phí"]
+    assert "1. TỔNG HỢP CHI PHÍ THEO TỪNG THÁNG" in [ws_kpi_check.cell(r, 1).value for r in range(1, 10)]
+    assert "2. TỔNG HỢP CHI PHÍ THEO NHÀ CUNG CẤP AI" in [ws_kpi_check.cell(r, 1).value for r in range(1, 20)]
+    wb_batch_rep.close()
+    print("✅ 9.3 Xuất 1 file Excel Báo cáo tổng hợp đa tháng (kèm bảng tháng & nhà cung cấp): ĐẠT")
+
+    print("\n" + "=" * 60)
+    print("🎉 TOÀN BỘ 9 BƯỚC KIỂM THỬ PIPELINE & BATCH FOLDER ĐÃ THÀNH CÔNG 100%!")
     print("=" * 60)
 
 if __name__ == "__main__":

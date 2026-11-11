@@ -54,91 +54,58 @@ MEP_OneAI_System/ai_bill_processor/ (và D:\Project\AI_BILL_CHECK\, D:\Project\a
 
 ---
 
-## 📂 CẤU TRÚC THƯ MỤC PRIVATE (TRÊN MÁY BẠN)
+## 📂 CẤU TRÚC 2 FOLDER XỬ LÝ ĐA THÁNG (BATCH PROCESSING)
 
-Mặc định hệ thống trỏ tới: `D:\Private_Documents\Doc\AI-Bill` (có thể đổi trong `config.py` hoặc `.env`).
-Hỗ trợ cả 2 cách sắp xếp:
+Mặc định hệ thống trỏ tới: `D:\Private_Documents\Doc\AI-Bill` (hoặc cấu hình tùy ý qua `--folder1`, `--folder2`, `--dir`).
 
-### Cách 1: Để trực tiếp (Tiện nhất, đang dùng)
 ```text
 D:\Private_Documents\Doc\AI-Bill\
-├── (AI Crew) thanh toán hóa đơn tháng 2026.08.xlsx   (File 1: Ảnh hóa đơn)
-├── [AI Crew] member share.xlsx                      (File 2: KnoxID & Đơn giá)
-└── output_reports/                                  (Tự động tạo ra)
-    ├── Bao_cao_doi_soat_hoa_don_AI_2026-08_TEST.xlsx
-    └── extracted_images_2026-08/
-        ├── 7ac3d0ee16_Nguyễn_Thị_Kim_Ngân_ChatGPT.png
-        └── ...
+├── invoices_file1/                                 <-- [FOLDER 1]: Chứa các file Excel 1 của từng tháng
+│   ├── (AI Crew) thanh toán hóa đơn tháng 8.xlsx    (Tháng 8)
+│   ├── (AI Crew) thanh toán hóa đơn tháng 9.xlsx    (Tháng 9)
+│   └── (AI Crew) thanh toán hóa đơn tháng 10.xlsx   (Tháng 10)
+├── members_file2/                                  <-- [FOLDER 2]: Chứa file Excel 2 tổng hợp giá các tháng
+│   └── Chi tiết thanh toán.xlsx                    (Sheet 'Thanh toán' chứa các cột Aug-26, Sep-26, Oct-26...)
+└── output_reports/                                 <-- Nơi xuất file Excel báo cáo đối soát tổng hợp
+    └── Bao_cao_tong_hop_doi_soat_hoa_don_AI_2026-08_den_2026-10_TEST.xlsx
 ```
 
-### Cách 2: Phân loại theo thư mục con
-```text
-D:\Private_Documents\Doc\AI-Bill\
-├── invoices_file1/
-│   ├── (AI Crew) thanh toán hóa đơn tháng 2026.08.xlsx
-│   └── (AI Crew) thanh toán hóa đơn tháng 2026.10.xlsx
-├── members_file2/
-│   └── [AI Crew] member share.xlsx
-└── output_reports/
-    ├── Bao_cao_doi_soat_hoa_don_AI_2026-08_TEST.xlsx
-    └── extracted_images_2026-08/
-```
+### 🧠 Logic hoạt động:
+1. Tự động quét **tất cả** các file Excel trong **Folder 1** (`invoices_file1/`).
+2. Tự động nhận diện tháng của từng file (File tháng 8 so với cột `Aug-26`, file tháng 9 so với cột `Sep-26`, file tháng 10 so với `Oct-26` trong **File 2**).
+3. Bóc tách ảnh hóa đơn OpenXML nguyên bản của từng tháng lưu vào project (`extracted_images/{YYYY-MM}/`).
+4. **Tổng hợp toàn bộ các tháng lại thành 1 FILE BÁO CÁO DUY NHẤT** trong thư mục `output_reports/`:
+   - **Sheet 1 (`AI_INVOICE_CHECK`)**: Toàn bộ bản ghi của tất cả các tháng theo chuẩn 22 cột database + link ảnh local.
+   - **Sheet 2 (`Tổng hợp chi phí`)**: Có **Bảng 1** thống kê chi tiết theo từng tháng và **Bảng 2** thống kê theo từng nhà cung cấp AI.
 
 ---
 
 ## 🚀 HƯỚNG DẪN CHẠY DỰ ÁN
 
-### 1. CHẠY TEST ĐỐI SOÁT (AN TOÀN - KHÔNG GHI DB/MINIO)
-> Chế độ này đọc file thật từ thư mục Private, bóc tách ảnh thật, đối soát khớp giá, xuất file Excel báo cáo và xuất ảnh bóc tách vào `output_reports/` để bạn mở lên kiểm tra mắt thấy tai nghe.
+### 1. CHẠY TEST ĐỐI SOÁT TẤT CẢ CÁC THÁNG (MẶC ĐỊNH - AN TOÀN)
+> Tự động quét toàn bộ Folder 1 và Folder 2, bóc tách ảnh và đối soát giá từng tháng, xuất 1 file Excel báo cáo tổng hợp.
 
-Chỉ cần mở Terminal tại thư mục dự án và chạy:
 ```bash
 python main_sync.py
 ```
-*(Mặc định không truyền cờ gì là chạy chế độ TEST an toàn)*
-
-Hoặc truyền rõ ràng:
+Hoặc truyền đường dẫn thư mục tùy chỉnh:
 ```bash
-python main_sync.py --test
+python main_sync.py --folder1 "D:\Private\invoices_file1" --folder2 "D:\Private\members_file2"
 ```
 
-**Kết quả nhận được:**
-* 📊 **File Excel Báo cáo:** `D:\Private_Documents\Doc\AI-Bill\output_reports\Bao_cao_doi_soat_hoa_don_AI_{Tháng}_TEST.xlsx`
-* 📸 **Folder ảnh đã bóc tách:** `D:\Private_Documents\Doc\AI-Bill\output_reports\extracted_images_{Tháng}\`
-
----
-
-### 2. CHẠY ĐỒNG BỘ THẬT (UPLOAD MINIO & LƯU ORACLE DB)
-> Sau khi bạn đã mở file Excel báo cáo và kiểm tra toàn bộ thông tin đã khớp chuẩn 100%, hãy chạy lệnh này để chính thức lưu vào hệ thống:
+### 2. CHẠY ĐỒNG BỘ THẬT LÊN MINIO & DATABASE ORACLE
+> Sau khi kiểm tra file Excel báo cáo đã khớp 100%, chạy lệnh sau để tải ảnh toàn bộ các tháng lên MinIO và lưu vào Oracle DB:
 
 ```bash
 python main_sync.py --sync
 ```
-
-Nếu bạn muốn dọn dẹp các bản ghi cũ của tháng đó trước khi nạp lại (tránh trùng lặp dữ liệu):
+Nếu muốn dọn dẹp dữ liệu cũ của các tháng đó trước khi nạp lại:
 ```bash
 python main_sync.py --sync --clear-month
 ```
 
-**Hệ thống sẽ:**
-1. Upload toàn bộ ảnh vào MinIO S3: `aibill/{YYYY-MM}/{ID}.png`.
-2. Insert toàn bộ dòng hóa đơn vào Oracle DB: `LOCAL_AI.AI_INVOICE_CHECK`.
-3. Xuất file Excel báo cáo hoàn tất: `Bao_cao_doi_soat_hoa_don_AI_{Tháng}_SYNCED.xlsx`.
-4. Dữ liệu ngay lập tức hiển thị trên màn hình giao diện web OneAI!
-
----
-
-### 3. TÙY CHỌN TRUYỀN THAM SỐ (NẾU CẦN CHỈ ĐỊNH ĐẶC BIỆT)
-
-* **Chỉ định tháng thanh toán cụ thể:**
-  ```bash
-  python main_sync.py --month "2026-08"
-  ```
-* **Chỉ định thư mục Private tùy ý:**
-  ```bash
-  python main_sync.py --dir "D:\Thu_Muc_Khac\Doc\AI-Bill"
-  ```
-* **Chỉ định file lẻ trực tiếp:**
-  ```bash
-  python main_sync.py --file1 "D:\path\to\file1.xlsx" --file2 "D:\path\to\file2.xlsx"
-  ```
+### 3. CHẠY FILE ĐƠN LẺ (SINGLE FILE)
+Nếu bạn chỉ muốn đối soát riêng 1 file của 1 tháng:
+```bash
+python main_sync.py --file1 "D:\path\to\file1_thang8.xlsx" --file2 "D:\path\to\file2.xlsx"
+```

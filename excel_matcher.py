@@ -573,15 +573,21 @@ class ExcelDataMatcher:
         print(f"👥 [ExcelMatcher] Đã nạp thành công {len(self.users_list)} nhân sự từ File 2.")
         return self.users_by_name
 
-    def pair_and_build_records(self, extracted_invoices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def pair_and_build_records(
+        self,
+        extracted_invoices: List[Dict[str, Any]],
+        month_override: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Ghép nối ảnh hóa đơn với dữ liệu File 2.
         Ưu tiên lấy KnoxID và Email từ Sheet 'Tiêu chuẩn email', lấy đơn giá từ Sheet 'Thanh toán'.
         Trả về danh sách 22 trường dữ liệu chuẩn của bảng LOCAL_AI.AI_INVOICE_CHECK.
         """
-        self.load_users_data()
+        if not self.month_blocks:
+            self.load_users_data()
+
         final_records = []
-        month_db = self.month_str or "2026-08"
+        month_db = month_override or self.month_str or "2026-08"
 
         # Xác định khối tháng cần dùng trong File 2
         used_month = month_db
@@ -603,7 +609,7 @@ class ExcelDataMatcher:
                 print(f"⚠️ [ExcelMatcher Warning] Tháng {month_db} chưa có trong File 2, tự động dùng tháng gần nhất: {used_month}")
 
         header_desc = self.month_blocks.get(used_month, {}).get("header", used_month)
-        print(f"🎯 [ExcelMatcher] Áp dụng bảng đơn giá tháng: {used_month} ('{header_desc}')")
+        print(f"🎯 [ExcelMatcher] Áp dụng bảng đơn giá tháng: {used_month} ('{header_desc}') cho đợt thanh toán {month_db}")
 
         for inv in extracted_invoices:
             sub_name = inv["submitter_name"]
