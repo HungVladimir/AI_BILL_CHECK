@@ -131,24 +131,50 @@ TABLE_NAME = "LOCAL_AI.AI_INVOICE_CHECK"
 def extract_month_from_filename(filename: str) -> str:
     """
     Tự động trích xuất tháng từ tên file dạng:
+    '(AI Crew) thanh toán hóa đơn tháng 2026.08.xlsx' -> '2026-08'
     '(AI Crew) thanh toán hóa đơn tháng 2026.10.xlsx' -> '2026-10'
-    '(AI Crew) thanh toán hóa đơn tháng 2026.09.xlsx' -> '2026-09'
-    '(AI Crew) thanh toán hóa đơn tháng 2026-08.xlsx' -> '2026-08'
+    '(AI Crew) thanh toán hóa đơn tháng 8.xlsx' -> '2026-08'
+    '(AI Crew) thanh toán hóa đơn tháng 8.2026.xlsx' -> '2026-08'
+    'Hoa don thang 8.2026.xlsx' -> '2026-08'
+    'Aug-26.xlsx' -> '2026-08'
+    'Oct-26.xlsx' -> '2026-10'
     """
-    clean_name = Path(filename).name
-    # Tìm mẫu 4 số năm . hoặc - 2 số tháng
-    match = re.search(r'(\d{4})[._](\d{1,2})', clean_name)
-    if match:
-        year = match.group(1)
-        month = match.group(2).zfill(2)
-        return f"{year}-{month}"
-    
-    # Dự phòng: tìm năm và tháng cách nhau bởi chữ
-    match_fallback = re.search(r'tháng\s*(\d{1,2})[._\-\s]+(\d{4})', clean_name, re.IGNORECASE)
-    if match_fallback:
-        month = match_fallback.group(1).zfill(2)
-        year = match_fallback.group(2)
-        return f"{year}-{month}"
+    clean_name = Path(filename).name.lower()
+
+    # 1. Mẫu YYYY.MM hoặc YYYY-MM hoặc YYYY_MM (e.g. 2026.08, 2026.8, 2026-10)
+    m = re.search(r'(20\d{2})[._\-](\d{1,2})', clean_name)
+    if m:
+        year = m.group(1)
+        month = m.group(2).zfill(2)
+        if 1 <= int(month) <= 12:
+            return f"{year}-{month}"
+
+    # 2. Mẫu MM.YYYY hoặc MM-YYYY hoặc MM_YYYY (e.g. 08.2026, 8.2026, 10-2026)
+    m = re.search(r'(?:^|[^\d])(\d{1,2})[._\-](20\d{2})', clean_name)
+    if m:
+        month = m.group(1).zfill(2)
+        year = m.group(2)
+        if 1 <= int(month) <= 12:
+            return f"{year}-{month}"
+
+    # 3. Mẫu tháng M.YYYY hoặc tháng M YYYY (e.g. tháng 8.2026, thang 8 2026, tháng 8)
+    m = re.search(r'th[aá]ng\s*(\d{1,2})(?:[._\-\s]*(20\d{2}))?', clean_name)
+    if m:
+        month = m.group(1).zfill(2)
+        year = m.group(2) or "2026"
+        if 1 <= int(month) <= 12:
+            return f"{year}-{month}"
+
+    # 4. Mẫu tên tháng tiếng Anh (e.g. aug-26, sep-26, oct-26)
+    eng_months = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
+        'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    }
+    for em, num in eng_months.items():
+        if em in clean_name:
+            m_yr = re.search(r'20\d{2}|\d{2}', clean_name)
+            yr = f"20{m_yr.group(0)}" if (m_yr and len(m_yr.group(0)) == 2) else (m_yr.group(0) if m_yr else "2026")
+            return f"{yr}-{num}"
 
     # Mặc định lấy tháng hiện tại nếu không nhận diện được
     return datetime.now().strftime("%Y-%m")

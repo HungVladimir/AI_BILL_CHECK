@@ -26,8 +26,13 @@ def test_full_pipeline():
     # 1. Test helper functions
     assert extract_month_from_filename("(AI Crew) thanh toán hóa đơn tháng 2026.10.xlsx") == "2026-10"
     assert extract_month_from_filename("(AI Crew) thanh toán hóa đơn tháng 2026.09.xlsx") == "2026-09"
+    assert extract_month_from_filename("(AI Crew) thanh toán hóa đơn tháng 8.xlsx") == "2026-08"
+    assert extract_month_from_filename("thang 8.2026.xlsx") == "2026-08"
+    assert extract_month_from_filename("Aug-26.xlsx") == "2026-08"
+    assert extract_month_from_filename("Oct-26.xlsx") == "2026-10"
     assert convert_month_to_excel2_header("2026-10") == "Oct-26"
     assert convert_month_to_excel2_header("2026-09") == "Sep-26"
+    assert convert_month_to_excel2_header("2026-08") == "Aug-26"
     print("✅ 1. Kiểm tra trích xuất Tháng & Header Conversion: ĐẠT")
 
     # 2. Tạo ảnh mẫu nhỏ để nhúng vào Excel
@@ -89,16 +94,16 @@ def test_full_pipeline():
     ws_email_std.append(["dong.nh", "Nguyễn Hữu Đồng", "OpenAI", "ChatGPT", "Plus", "dongnguyen30794@gmail.com"])
     ws_email_std.append(["dong.nh", "Nguyễn Hữu Đồng", "Anthropic", "Claude", "Pro", "dongnguyen30794@gmail.com"])
 
-    # Tạo Sheet 2: Thanh toán
+    # Tạo Sheet 2: Thanh toán (Mô phỏng 100% cấu trúc thực tế từ ảnh media_1794371395755_944ee58d.jpg)
     ws2 = wb2.create_sheet(title="Thanh toán")
     # Row 1: Header tháng
-    ws2.append(["No.", "KnoxID", "Name", "ChatGPT Plus", "", "Claude Pro", "", "Gemini Pro", "", "Aug-26", "", "", "Sep-26", "", "", "Oct-26", "", "", ""])
+    ws2.append(["No.", "KnoxID", "Name", "Gemini Pro", "", "Aug-26", "", "", "Sep-26", "", "", "Oct-26", "", "", ""])
     # Row 2: Sub-header
-    ws2.append(["", "", "", "Đăng nhập", "Thanh toán", "Đăng nhập", "Thanh toán", "Đăng nhập", "Thanh toán", "ChatGPT Plus", "Claude Pro", "Total", "ChatGPT Plus", "Claude Pro", "Total", "ChatGPT Plus", "Claude Pro", "Gemini Pro", "Total"])
+    ws2.append(["", "", "", "Đăng nhập", "Thanh toán", "ChatGPT Plus", "Claude Pro", "Total", "ChatGPT Plus", "Claude Pro", "Total", "ChatGPT Plus", "Claude Pro", "Gemini Pro", "Total"])
     # Data rows
-    ws2.append([1, "kimngan.nguyen", "Nguyễn Thị Kim Ngân", "kimngan", "nguyenthikimngan269", "", "", "", "", 0, 0, 0, 0, 0, 0, 499000, 0, 0, 499000])
-    ws2.append([2, "thaonga.chu", "Chu Thị Thảo Nga", "thaonga", "themeteor_xt@yahoo.com.vn", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    ws2.append([3, "dong.nh", "Nguyễn Hữu Đồng", "dong.nh", "dongnguyen30794", "dong.nh", "dongnguyen30794", "", "", 0, 0, 0, 0, 0, 0, 527778, 554444, 0, 1082222])
+    ws2.append([1, "kimngan.nguyen", "Nguyễn Thị Kim Ngân", "", "", 499000, 0, 499000, 499000, 0, 499000, 499000, 0, 0, 499000])
+    ws2.append([2, "thaonga.chu", "Chu Thị Thảo Nga", "", "", 0, 0, 0, 522500, 0, 522500, 522500, 0, 0, 522500])
+    ws2.append([3, "dong.nh", "Nguyễn Hữu Đồng", "dongnguyen30794", "dongnguyen30794", 527778, 554444, 1082222, 527778, 554444, 1082222, 527778, 554444, 0, 1082222])
 
     test_f2 = test_dir / "Chi tiết thanh toán 2026.10.xlsx"
     try:
@@ -156,6 +161,37 @@ def test_full_pipeline():
     assert hd_cld["STATUS"] == "confirmed"
     assert hd_gpt["ID"] != hd_cld["ID"], "Hai hóa đơn phải có ID khác nhau!"
     print("✅ 5. Kiểm tra người có 2 hóa đơn tách 2 dòng độc lập (Hữu Đồng): ĐẠT")
+
+    # 5.1 Kiểm tra đa tháng (Aug-26, Sep-26) và khớp tên không dấu / Unicode NFD
+    matcher_aug = ExcelDataMatcher(str(test_f2), month_str="2026-08")
+    recs_aug = matcher_aug.pair_and_build_records(invs)
+    r_aug_kn = [r for r in recs_aug if "Kim Ngân" in r["SUBMITTER_NAME"]][0]
+    assert r_aug_kn["AMOUNT"] == 499000, f"Kỳ vọng 499000, thực tế {r_aug_kn['AMOUNT']}"
+
+    matcher_sep = ExcelDataMatcher(str(test_f2), month_str="2026-09")
+    recs_sep = matcher_sep.pair_and_build_records(invs)
+    r_sep_kn = [r for r in recs_sep if "Kim Ngân" in r["SUBMITTER_NAME"]][0]
+    assert r_sep_kn["AMOUNT"] == 499000, f"Kỳ vọng 499000, thực tế {r_sep_kn['AMOUNT']}"
+
+    # Kiểm tra so khớp tên không dấu (e.g. 'Nguyen Thi Kim Ngan' -> 'Nguyễn Thị Kim Ngân')
+    inv_unacc = [{
+        "row_idx": 2,
+        "submitter_name": "Nguyen Thi Kim Ngan",
+        "provider_key": "chatgpt",
+        "provider_name": "ChatGPT",
+        "plan": None,
+        "file_name": "gpt_raw.png",
+        "raw_bytes": b"fake_bytes_for_test",
+        "width": 100,
+        "height": 50,
+        "invoice_date": None,
+        "invoice_number": None
+    }]
+    recs_unacc = matcher.pair_and_build_records(inv_unacc)
+    assert len(recs_unacc) == 1
+    assert recs_unacc[0]["USERID"] == "kimngan.nguyen"
+    assert recs_unacc[0]["AMOUNT"] == 499000
+    print("✅ 5.1 Kiểm tra đối soát Đa tháng & So khớp tên không dấu: ĐẠT")
 
     # 6. Test Dry-run MinIO & DB
     uploader = MinioUploader(dry_run=True)
