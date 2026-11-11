@@ -259,7 +259,9 @@ def load_email_standards(wb) -> Dict[str, Any]:
                 col_gen = c
             elif "tier" in val:
                 col_tier = c
-            elif any(k in val for k in ["email_payment", "email", "mail", "payment"]):
+            elif "email" in val or "mail" in val or "email_payment" in val:
+                col_email = c
+            elif "payment" in val and not col_email:
                 col_email = c
 
     if not col_name:
@@ -667,24 +669,21 @@ class ExcelDataMatcher:
                 if not user_email:
                     user_email = user_info.get("email", "")
 
-            # 3. Lấy đơn giá tháng used_month từ user_info
+            # 3. Lấy đơn giá chuẩn theo đúng dịch vụ AI và tháng đối soát từ user_info
             amount = 0.0
             if user_info:
                 m_amts = user_info["amounts_by_month"].get(used_month, {})
-                amt = m_amts.get(p_key, 0.0)
-                if amt > 0:
-                    amount = amt
+                # Lấy chính xác theo provider_key: 'chatgpt' -> 'ChatGPT Plus', 'claude' -> 'Claude Pro', 'gemini' -> 'Gemini Pro'
+                if p_key in m_amts:
+                    amount = float(m_amts[p_key])
+                elif p_key == "chatgpt" and "openai" in m_amts:
+                    amount = float(m_amts["openai"])
+                elif p_key == "claude" and "anthropic" in m_amts:
+                    amount = float(m_amts["anthropic"])
+                elif p_key == "gemini" and "google" in m_amts:
+                    amount = float(m_amts["google"])
                 else:
-                    # Fallback an toàn:
-                    # Nếu người này chỉ có 1 dịch vụ > 0 trong tháng -> lấy số đó
-                    # Hoặc nếu cột Total > 0 -> lấy Total
-                    other_positives = [v for k, v in m_amts.items() if k != "total" and v > 0]
-                    if len(other_positives) == 1:
-                        amount = other_positives[0]
-                    elif m_amts.get("total", 0.0) > 0:
-                        amount = m_amts.get("total", 0.0)
-                    else:
-                        amount = 0.0
+                    amount = 0.0
 
             # 4. Sinh ID ngẫu nhiên 10 ký tự tương đương LOCAL_AI.FN_MAKE_ID(10)
             inv_id = generate_invoice_id(10)
