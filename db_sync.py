@@ -79,6 +79,29 @@ class DatabaseSynchronizer:
         except Exception as e:
             print(f"⚠️ [Oracle DB Warning] Không thể kết nối cơ sở dữ liệu ({e}) -> Chuyển sang chế độ giả lập.")
 
+    def clear_month_data(self, month: str) -> bool:
+        """
+        Xóa toàn bộ các bản ghi của tháng chỉ định trong bảng LOCAL_AI.AI_INVOICE_CHECK.
+        Hỗ trợ dọn dẹp dữ liệu cũ trước khi nạp lại dữ liệu mới.
+        """
+        if not month:
+            return False
+        if self.dry_run or not self.cur:
+            print(f"   [Dry-Run SQL] DELETE FROM {TABLE_NAME} WHERE MONTH = '{month}'")
+            return True
+        try:
+            del_sql = f"DELETE FROM {TABLE_NAME} WHERE MONTH = :month"
+            self.cur.execute(del_sql, params={"month": month})
+            if hasattr(self.cur, "commit"):
+                self.cur.commit()
+            elif self.conn and hasattr(self.conn, "commit"):
+                self.conn.commit()
+            print(f"🗑️ [Oracle DB] Đã xóa thành công dữ liệu cũ của tháng {month}.")
+            return True
+        except Exception as e:
+            print(f"⚠️ [Oracle DB Warning] Lỗi khi xóa dữ liệu tháng {month}: {e}")
+            return False
+
     def insert_records(self, records: List[Dict[str, Any]], clear_existing_month: bool = False, month: Optional[str] = None) -> int:
         """
         Thực thi chèn danh sách các bản ghi hóa đơn vào bảng AI_INVOICE_CHECK.

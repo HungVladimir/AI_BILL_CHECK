@@ -201,9 +201,10 @@ def test_full_pipeline():
     print("✅ 6. Kiểm tra MinIO Uploader (Dry-Run): ĐẠT")
 
     db_sync = DatabaseSynchronizer(dry_run=True)
+    assert db_sync.clear_month_data("2026-10") is True
     ins_cnt = db_sync.insert_records(records)
     assert ins_cnt == 3
-    print("✅ 7. Kiểm tra Database Synchronizer (Dry-Run): ĐẠT")
+    print("✅ 7. Kiểm tra Database Synchronizer (Dry-Run & Clear Month): ĐẠT")
 
     # 8. Test Export Báo cáo Excel ra Private & Ảnh ra Project
     mock_private_reports = test_dir / "mock_private_reports"

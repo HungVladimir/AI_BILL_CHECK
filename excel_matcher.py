@@ -164,35 +164,46 @@ def get_month_match_candidates(month_str: str) -> List[str]:
 def select_best_sheet_matcher(wb, file_path: Path):
     """
     Tự động chọn Sheet chính xác chứa dữ liệu bảng thanh toán File 2:
-    1. ƯU TIÊN TUYỆT ĐỐI: Sheet có tên 'Thanh toán' (hoặc 'thanh toan' / 'payment').
-    2. Sheet chứa 'knoxid', 'name' hoặc từ khóa 'member', 'share'.
-    3. Sheet active mặc định.
+    1. ƯU TIÊN TUYỆT ĐỐI: Khớp chính xác tên Sheet 'Thanh toán' / 'Thanh toan' / 'Payment'.
+    2. Loại trừ triệt để sheet gói cước ('Gói AI và phê duyệt thanh toán'), biên bản, danh sách team.
+    3. Quét dòng tiêu đề tìm sheet chứa đồng thời KnoxID, Họ tên và các cột tháng (Aug-26, Sep-26, Oct-26...).
     """
-    # 1. Kiểm tra sheet chuẩn 'Thanh toán' trước tiên
+    # 1. ƯU TIÊN TUYỆT ĐỐI: Khớp chính xác hoàn toàn tên sheet chuẩn 'Thanh toán'
     for sname in wb.sheetnames:
         s_clean = normalize_name(sname)
+        if s_clean in ["thanh toán", "thanh toan", "payment"]:
+            return wb[sname]
+
+    # 2. Loại trừ các sheet phụ trợ trong File 2
+    excluded_keywords = [
+        "gói ai", "phê duyệt", "tiêu chuẩn", "tieu chuan", "meeting", "danh sách", "danh sach", "từng team"
+    ]
+    for sname in wb.sheetnames:
+        s_clean = normalize_name(sname)
+        if any(ex in s_clean for ex in excluded_keywords):
+            continue
+        # Nếu tên sheet chứa 'thanh toán' mà không phải là sheet gói cước
         if "thanh toán" in s_clean or "thanh toan" in s_clean or "payment" in s_clean:
             return wb[sname]
 
+    # 3. Tính điểm nội dung 5 dòng đầu tìm bảng chứa KnoxID, Name và các cột tháng
     sheet_scores = []
     for sname in wb.sheetnames:
         score = 0
         s_lower = sname.lower()
-        # Bỏ qua sheet tiêu chuẩn email khi chọn sheet thanh toán đơn giá
-        if "tiêu chuẩn" in s_lower or "tieu chuan" in s_lower:
+        if any(ex in s_lower for ex in excluded_keywords):
             continue
-        if any(k in s_lower for k in ["member", "share", "crew", "ai"]):
-            score += 20
 
-        # Kiểm tra nội dung 5 dòng đầu
         ws_temp = wb[sname]
         try:
             for r in range(1, min(7, ws_temp.max_row + 1)):
                 row_vals = [str(ws_temp.cell(r, c).value or "").strip().lower() for c in range(1, min(25, ws_temp.max_column + 1))]
                 if any("knoxid" in v for v in row_vals):
-                    score += 40
+                    score += 50
                 if any(k in v for v in row_vals for k in ["name", "họ và tên", "ho va ten"]):
-                    score += 20
+                    score += 30
+                if any(any(m in v for m in ["aug-26", "sep-26", "oct-26", "nov-26"]) for v in row_vals):
+                    score += 40
                 if any(any(kw in v for kw in ["chatgpt", "claude", "gemini", "plus", "pro", "total"]) for v in row_vals):
                     score += 20
         except Exception:
