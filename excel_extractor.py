@@ -273,6 +273,15 @@ class ExcelImageExtractor:
                         img_format = "PNG"
                         w, h = 0, 0
 
+                    # Tên file ảnh gốc (giữ nguyên nếu có trong excel, fallback theo cấu hình)
+                    orig_detected_name = img_data.get("orig_name")
+                    if orig_detected_name:
+                        file_name = orig_detected_name
+                        if "." not in file_name:
+                            file_name = f"{file_name}.png"
+                    else:
+                        file_name = p_cfg["default_filename"]
+
                     results.append({
                         "row_idx": r,
                         "submitter_name": submitter_name,
@@ -280,8 +289,8 @@ class ExcelImageExtractor:
                         "team": team,
                         "provider_key": p_key,
                         "provider_name": p_cfg["name"],
-                        "plan": p_cfg["plan"],
-                        "file_name": p_cfg["default_filename"],
+                        "plan": None,  # Quy định nghiệp vụ: để null
+                        "file_name": file_name,
                         "raw_bytes": raw_bytes,
                         "image_format": img_format,
                         "width": w,
@@ -364,12 +373,27 @@ class ExcelImageExtractor:
                         if not embed_id or embed_id not in rid_to_target:
                             continue
 
+                        # Lấy tên ảnh gốc nếu có từ cNvPr
+                        orig_name = None
+                        cnvpr = anchor.find('.//xdr:cNvPr', ns)
+                        if cnvpr is not None:
+                            c_name = (cnvpr.attrib.get('name') or '').strip()
+                            c_descr = (cnvpr.attrib.get('descr') or '').strip()
+                            c_title = (cnvpr.attrib.get('title') or '').strip()
+                            for cand in [c_name, c_descr, c_title]:
+                                if cand and any(cand.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp', '.bmp']):
+                                    orig_name = cand
+                                    break
+                            if not orig_name and c_name and not c_name.lower().startswith('picture'):
+                                orig_name = c_name
+
                         media_path = rid_to_target[embed_id]
                         if media_path in zf.namelist():
                             raw_data = zf.read(media_path)
                             cell_images[(r_idx, c_idx)] = {
                                 "bytes": raw_data,
-                                "media_path": media_path
+                                "media_path": media_path,
+                                "orig_name": orig_name
                             }
         except Exception as e:
             print(f"⚠️ [ExcelExtractor Warning] Lỗi đọc OpenXML Drawing: {e}")

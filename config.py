@@ -32,8 +32,35 @@ DIR_EXCEL_OUTPUT = AI_BILL_PRIVATE_DIR / "output_reports"  # Nơi xuất file Ex
 DIR_PROJECT_IMAGES = BASE_DIR / "extracted_images"
 
 # Tên Sheet chuẩn theo quy ước nghiệp vụ:
-SHEET_NAME_FILE1 = "Tổng hợp hóa đơn"  # File 1: Sheet chứa danh sách và ảnh hóa đơn
-SHEET_NAME_FILE2 = "Thanh toán"        # File 2: Sheet chứa KnoxID, email và đơn giá các tháng
+SHEET_NAME_FILE1 = "Tổng hợp hóa đơn"       # File 1: Sheet chứa danh sách và ảnh hóa đơn
+SHEET_NAME_FILE2 = "Thanh toán"             # File 2: Sheet chứa KnoxID, email và đơn giá các tháng
+SHEET_NAME_EMAIL_STANDARD = "Tiêu chuẩn email"  # File 2: Sheet chứa KnoxID, Name, AI_PROVIDER, AI_GEN, AI_TIER, EMAIL_PAYMENT
+
+# 22 Cột chuẩn Database LOCAL_AI.AI_INVOICE_CHECK:
+DB_COLUMNS = [
+    "ID",
+    "CREATED_AT",
+    "MONTH",
+    "SUBMITTER_NAME",
+    "SUBMITTER_EMAIL",
+    "FILE_NAME",
+    "FILE_PATH",
+    "MIME",
+    "DELETE_TOKEN",
+    "PROVIDER",
+    "INVOICE_NUMBER",
+    "INVOICE_DATE",
+    "BILLING_EMAIL",
+    "AMOUNT",
+    "PLAN",
+    "EMAIL_MATCH",
+    "WARNINGS",
+    "AI_RAW",
+    "STATUS",
+    "ADMIN_NOTE",
+    "REVIEWED_AT",
+    "USERID"
+]
 
 # --- 1. CẤU HÌNH NHÀ CUNG CẤP AI (CHATGPT, CLAUDE, GEMINI) ---
 PROVIDERS_CONFIG = {

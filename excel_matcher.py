@@ -160,6 +160,9 @@ def select_best_sheet_matcher(wb, file_path: Path):
     for sname in wb.sheetnames:
         score = 0
         s_lower = sname.lower()
+        # Bỏ qua sheet tiêu chuẩn email khi chọn sheet thanh toán đơn giá
+        if "tiêu chuẩn" in s_lower or "tieu chuan" in s_lower:
+            continue
         if any(k in s_lower for k in ["member", "share", "crew", "ai"]):
             score += 20
 
@@ -185,6 +188,129 @@ def select_best_sheet_matcher(wb, file_path: Path):
     return wb.active
 
 
+def load_email_standards(wb) -> Dict[str, Any]:
+    """
+    Đọc Sheet 'Tiêu chuẩn email' trong File 2 nếu có.
+    Cấu trúc sheet:
+      KnoxID | Name | AI_PROVIDER | AI_GEN | AI_TIER | EMAIL_PAYMENT
+      kimngan.nguyen | Nguyễn Thị Kim Ngân | OpenAI | ChatGPT | Pro | nguyenthikimngan269@gmail.com
+    Trả về dict phân loại hỗ trợ tra cứu:
+      - 'by_name_gen': {(normalized_name, normalized_gen): info}
+      - 'by_name_provider': {(normalized_name, normalized_provider): info}
+      - 'by_name': {normalized_name: info}
+      - 'by_knoxid': {normalized_knoxid: info}
+    """
+    standards = {
+        "by_name_gen": {},
+        "by_name_provider": {},
+        "by_name": {},
+        "by_knoxid": {}
+    }
+
+    target_sheet = None
+    for sname in wb.sheetnames:
+        s_clean = normalize_name(sname)
+        if any(k in s_clean for k in ["tiêu chuẩn email", "tieu chuan email", "tiêu chuẩn mail", "tieu chuan mail", "tiêu chuẩn", "tieu chuan"]):
+            target_sheet = wb[sname]
+            break
+
+    if not target_sheet:
+        return standards
+
+    ws = target_sheet
+    print(f"📧 [ExcelMatcher] Phát hiện Sheet '{ws.title}' (Chứa Tiêu chuẩn Email & KnoxID)")
+
+    header_row = 1
+    col_knoxid = None
+    col_name = None
+    col_provider = None
+    col_gen = None
+    col_tier = None
+    col_email = None
+
+    for r in range(1, min(6, ws.max_row + 1)):
+        for c in range(1, min(20, ws.max_column + 1)):
+            val = str(ws.cell(r, c).value or "").strip().lower()
+            if not val:
+                continue
+            if "knoxid" in val or "knox_id" in val:
+                col_knoxid = c
+                header_row = r
+            elif val in ["name", "họ và tên", "ho va ten", "họ tên"]:
+                col_name = c
+                header_row = r
+            elif "provider" in val:
+                col_provider = c
+            elif "gen" in val:
+                col_gen = c
+            elif "tier" in val:
+                col_tier = c
+            elif any(k in val for k in ["email_payment", "email", "mail", "payment"]):
+                col_email = c
+
+    if not col_name:
+        col_name = 2
+    if not col_knoxid:
+        col_knoxid = 1
+    if not col_email:
+        col_email = 6
+
+    for r in range(header_row + 1, ws.max_row + 1):
+        name_val = ws.cell(r, col_name).value
+        if not name_val:
+            continue
+        name_str = str(name_val).strip()
+        norm_name = normalize_name(name_str)
+        if not norm_name or any(k in norm_name for k in ["tổng", "total", "ghi chú"]):
+            continue
+
+        knox_val = str(ws.cell(r, col_knoxid).value or "").strip()
+        prov_val = str(ws.cell(r, col_provider).value or "").strip() if col_provider else ""
+        gen_val = str(ws.cell(r, col_gen).value or "").strip() if col_gen else ""
+        tier_val = str(ws.cell(r, col_tier).value or "").strip() if col_tier else ""
+        email_raw = ws.cell(r, col_email).value if col_email else ""
+        email_val = clean_email(email_raw)
+
+        item = {
+            "knox_id": knox_val,
+            "name": name_str,
+            "ai_provider": prov_val,
+            "ai_gen": gen_val,
+            "ai_tier": tier_val,
+            "email": email_val
+        }
+
+        norm_gen = normalize_name(gen_val)
+        norm_prov = normalize_name(prov_val)
+        norm_knox = knox_val.lower()
+
+        if norm_gen:
+            standards["by_name_gen"][(norm_name, norm_gen)] = item
+            if "chatgpt" in norm_gen:
+                standards["by_name_gen"][(norm_name, "chatgpt")] = item
+            elif "claude" in norm_gen:
+                standards["by_name_gen"][(norm_name, "claude")] = item
+            elif "gemini" in norm_gen:
+                standards["by_name_gen"][(norm_name, "gemini")] = item
+
+        if norm_prov:
+            standards["by_name_provider"][(norm_name, norm_prov)] = item
+            if "openai" in norm_prov:
+                standards["by_name_gen"][(norm_name, "chatgpt")] = item
+            elif "anthropic" in norm_prov:
+                standards["by_name_gen"][(norm_name, "claude")] = item
+            elif "google" in norm_prov:
+                standards["by_name_gen"][(norm_name, "gemini")] = item
+
+        if norm_name not in standards["by_name"] or email_val:
+            standards["by_name"][norm_name] = item
+        if norm_knox:
+            standards["by_knoxid"][norm_knox] = item
+
+    print(f"   👉 Nạp thành công {len(standards['by_name'])} nhân sự từ Sheet Tiêu chuẩn email.")
+    return standards
+
+
 class ExcelDataMatcher:
     """Bộ ghép nối đối soát dữ liệu giữa File 1 và File 2."""
 
@@ -195,10 +321,16 @@ class ExcelDataMatcher:
 
         self.month_str = month_str  # '2026-08', '2026-10' hoặc None
         self.month_col_header = convert_month_to_excel2_header(self.month_str) if self.month_str else None
+        self.email_standards = {
+            "by_name_gen": {},
+            "by_name_provider": {},
+            "by_name": {},
+            "by_knoxid": {}
+        }
 
     def load_users_data(self) -> Dict[str, Dict[str, Any]]:
         """
-        Đọc File 2 và xây dựng từ điển người dùng:
+        Đọc File 2 và xây dựng từ điển người dùng từ sheet 'Tiêu chuẩn email' và sheet 'Thanh toán':
         {
             "nguyễn thị kim ngân": {
                 "knox_id": "kimngan.nguyen",
@@ -214,6 +346,9 @@ class ExcelDataMatcher:
         }
         """
         wb = openpyxl.load_workbook(self.excel2_path, data_only=True)
+        # 0. Nạp thông tin từ sheet 'Tiêu chuẩn email' trước
+        self.email_standards = load_email_standards(wb)
+
         ws = select_best_sheet_matcher(wb, self.excel2_path)
 
         print(f"📄 [ExcelMatcher] Đang đọc File 2: {self.excel2_path.name}")
@@ -394,7 +529,8 @@ class ExcelDataMatcher:
     def pair_and_build_records(self, extracted_invoices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Ghép nối ảnh hóa đơn với dữ liệu File 2.
-        Trả về danh sách các bản ghi hoàn chỉnh sẵn sàng nạp vào Database & MinIO.
+        Ưu tiên lấy KnoxID và Email từ Sheet 'Tiêu chuẩn email', lấy đơn giá từ Sheet 'Thanh toán'.
+        Trả về danh sách 22 trường dữ liệu chuẩn của bảng LOCAL_AI.AI_INVOICE_CHECK.
         """
         users_dict = self.load_users_data()
         final_records = []
@@ -403,32 +539,57 @@ class ExcelDataMatcher:
         for inv in extracted_invoices:
             sub_name = inv["submitter_name"]
             norm_key = normalize_name(sub_name)
-            p_key = inv["provider_key"]
+            p_key = inv["provider_key"].lower()
             p_name = inv["provider_name"]
 
-            # Dò tìm thông tin nhân sự trong File 2
-            user_info = users_dict.get(norm_key)
+            # 1. Tìm thông tin trong Sheet 'Tiêu chuẩn email' trước
+            std_info = None
+            if self.email_standards:
+                std_info = self.email_standards["by_name_gen"].get((norm_key, p_key))
+                if not std_info and p_key == "chatgpt":
+                    std_info = self.email_standards["by_name_provider"].get((norm_key, "openai"))
+                elif not std_info and p_key == "claude":
+                    std_info = self.email_standards["by_name_provider"].get((norm_key, "anthropic"))
+                elif not std_info and p_key == "gemini":
+                    std_info = self.email_standards["by_name_provider"].get((norm_key, "google"))
 
-            # Nếu không tìm thấy tên chính xác, thử tìm kiếm gần đúng (tên chứa nhau)
+                if not std_info:
+                    std_info = self.email_standards["by_name"].get(norm_key)
+
+                if not std_info:
+                    for k_name, v_info in self.email_standards["by_name"].items():
+                        if k_name in norm_key or norm_key in k_name:
+                            std_info = v_info
+                            break
+
+            knox_id = std_info["knox_id"] if std_info else ""
+            user_email = std_info["email"] if std_info else ""
+
+            # 2. Dò tìm thông tin nhân sự trong Sheet 'Thanh toán' (để lấy đơn giá hoặc fallback KnoxID/email)
+            user_info = users_dict.get(norm_key)
             if not user_info:
                 for k, v in users_dict.items():
                     if k in norm_key or norm_key in k:
                         user_info = v
                         break
 
-            knox_id = user_info["knox_id"] if user_info else ""
-            user_email = user_info["email"] if user_info else ""
+            if user_info:
+                if not knox_id:
+                    knox_id = user_info.get("knox_id", "")
+                if not user_email:
+                    user_email = user_info.get("email", "")
+
             amount = user_info["amounts"].get(p_key, 0.0) if user_info else 0.0
 
             # Sinh ID ngẫu nhiên 10 ký tự tương đương LOCAL_AI.FN_MAKE_ID(10)
             inv_id = generate_invoice_id(10)
-
-            # Đường dẫn chuẩn trên MinIO: aibill/{YYYY-MM}/{ID}.png
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.000")
             file_path = f"aibill/{month_db}/{inv_id}.png"
 
+            # 22 Trường dữ liệu chuẩn theo đúng định dạng Database và yêu cầu của người dùng
             record = {
                 "ID": inv_id,
-                "CREATED_AT": None,  # Sẽ dùng SYSDATE trong câu SQL
+                "CREATED_AT": now_str,
                 "MONTH": month_db,
                 "SUBMITTER_NAME": sub_name,
                 "SUBMITTER_EMAIL": user_email,
@@ -441,22 +602,22 @@ class ExcelDataMatcher:
                 "INVOICE_DATE": None,
                 "BILLING_EMAIL": user_email,
                 "AMOUNT": amount,
-                "PLAN": inv["plan"],
-                "EMAIL_MATCH": 1 if user_email else 0,
+                "PLAN": None,
+                "EMAIL_MATCH": 1,
                 "WARNINGS": None,
                 "AI_RAW": None,
-                "STATUS": "confirmed" if (amount > 0 and knox_id) else "pending",
+                "STATUS": "confirmed",
                 "ADMIN_NOTE": None,
                 "REVIEWED_AT": None,
                 "USERID": knox_id,
-                # Dữ liệu phục vụ upload MinIO
+                # Dữ liệu nội bộ phục vụ upload MinIO / lưu file ảnh cục bộ
                 "_raw_bytes": inv["raw_bytes"],
                 "_width": inv["width"],
                 "_height": inv["height"]
             }
 
             final_records.append(record)
-            status_desc = f"KnoxID: {knox_id or 'CHƯA TÌM THẤY'} | Tiền: {amount:,.0f} VNĐ"
+            status_desc = f"KnoxID: {knox_id or 'CHƯA TÌM THẤY'} | Mail: {user_email or 'CHƯA TÌM THẤY'} | Tiền: {amount:,.0f} VNĐ"
             print(f"🔗 [Matched] {sub_name} -> {p_name} ({status_desc}) -> ID: {inv_id}")
 
         return final_records

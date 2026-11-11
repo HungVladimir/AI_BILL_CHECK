@@ -75,18 +75,30 @@ def test_full_pipeline():
         wb1.save(test_f1)
     wb1.close()
 
-    # 4. Tạo Mock File 2: 'Chi tiết thanh toán 2026.10.xlsx'
+    # 4. Tạo Mock File 2: 'Chi tiết thanh toán 2026.10.xlsx' gồm 2 sheet chuẩn:
+    # Sheet 1: 'Tiêu chuẩn email' (KnoxID, Name, AI_PROVIDER, AI_GEN, AI_TIER, EMAIL_PAYMENT)
+    # Sheet 2: 'Thanh toán' (KnoxID, Name, Đăng nhập, Thanh toán, và các cột tháng Aug-26, Sep-26, Oct-26...)
     wb2 = openpyxl.Workbook()
-    ws2 = wb2.active
-    ws2.title = "Thanh toán"
+
+    # Tạo Sheet 1: Tiêu chuẩn email
+    ws_email_std = wb2.active
+    ws_email_std.title = "Tiêu chuẩn email"
+    ws_email_std.append(["KnoxID", "Name", "AI_PROVIDER", "AI_GEN", "AI_TIER", "EMAIL_PAYMENT"])
+    ws_email_std.append(["kimngan.nguyen", "Nguyễn Thị Kim Ngân", "OpenAI", "ChatGPT", "Pro", "nguyenthikimngan269@gmail.com"])
+    ws_email_std.append(["thaonga.chu", "Chu Thị Thảo Nga", "OpenAI", "ChatGPT", "Pro", "themeteor_xt@yahoo.com.vn"])
+    ws_email_std.append(["dong.nh", "Nguyễn Hữu Đồng", "OpenAI", "ChatGPT", "Plus", "dongnguyen30794@gmail.com"])
+    ws_email_std.append(["dong.nh", "Nguyễn Hữu Đồng", "Anthropic", "Claude", "Pro", "dongnguyen30794@gmail.com"])
+
+    # Tạo Sheet 2: Thanh toán
+    ws2 = wb2.create_sheet(title="Thanh toán")
     # Row 1: Header tháng
-    ws2.append(["No.", "KnoxID", "Name", "Gemini Pro", "", "Oct-26", "", "", ""])
+    ws2.append(["No.", "KnoxID", "Name", "ChatGPT Plus", "", "Claude Pro", "", "Gemini Pro", "", "Aug-26", "", "", "Sep-26", "", "", "Oct-26", "", "", ""])
     # Row 2: Sub-header
-    ws2.append(["", "", "", "Đăng nhập", "Thanh toán", "ChatGPT Plus", "Claude Pro", "Gemini Pro", "Total"])
+    ws2.append(["", "", "", "Đăng nhập", "Thanh toán", "Đăng nhập", "Thanh toán", "Đăng nhập", "Thanh toán", "ChatGPT Plus", "Claude Pro", "Total", "ChatGPT Plus", "Claude Pro", "Total", "ChatGPT Plus", "Claude Pro", "Gemini Pro", "Total"])
     # Data rows
-    ws2.append([1, "kimngan.nguyen", "Nguyễn Thị Kim Ngân", "kimngan", "nguyenthikimngan269", 499000, 0, 0, 499000])
-    ws2.append([2, "thaonga.chu", "Chu Thị Thảo Nga", "thaonga", "themeteor_xt@yahoo.com.vn", 0, 0, 0, 0])
-    ws2.append([3, "dong.nh", "Nguyễn Hữu Đồng", "dong.nh", "dongnguyen30794", 527778, 554444, 0, 1082222])
+    ws2.append([1, "kimngan.nguyen", "Nguyễn Thị Kim Ngân", "kimngan", "nguyenthikimngan269", "", "", "", "", 0, 0, 0, 0, 0, 0, 499000, 0, 0, 499000])
+    ws2.append([2, "thaonga.chu", "Chu Thị Thảo Nga", "thaonga", "themeteor_xt@yahoo.com.vn", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    ws2.append([3, "dong.nh", "Nguyễn Hữu Đồng", "dong.nh", "dongnguyen30794", "dong.nh", "dongnguyen30794", "", "", 0, 0, 0, 0, 0, 0, 527778, 554444, 0, 1082222])
 
     test_f2 = test_dir / "Chi tiết thanh toán 2026.10.xlsx"
     try:
@@ -103,23 +115,32 @@ def test_full_pipeline():
     invs = ext.extract_invoices()
     print(f"📸 Số lượng ảnh trích xuất từ File 1: {len(invs)}")
     assert len(invs) == 3, f"Kỳ vọng 3 ảnh, thực tế {len(invs)}"
-    print("✅ 2. Trích xuất ảnh OpenXML: ĐẠT")
+    for inv in invs:
+        assert inv["plan"] is None, "Plan trích xuất phải là None (null)"
+    print("✅ 2. Trích xuất ảnh OpenXML & Kiểm tra PLAN null: ĐẠT")
 
     matcher = ExcelDataMatcher(str(test_f2), month_str="2026-10")
     records = matcher.pair_and_build_records(invs)
     print(f"📊 Số lượng bản ghi ghép nối: {len(records)}")
     assert len(records) == 3, f"Kỳ vọng 3 bản ghi, thực tế {len(records)}"
-    print("✅ 3. Ghép nối dữ liệu & Tính tiền: ĐẠT")
+    print("✅ 3. Ghép nối dữ liệu từ Sheet 'Tiêu chuẩn email' & Sheet 'Thanh toán': ĐẠT")
 
     # Kiểm tra bản ghi 1 (Kim Ngân):
     r1 = [r for r in records if r["SUBMITTER_NAME"] == "Nguyễn Thị Kim Ngân"][0]
     assert r1["USERID"] == "kimngan.nguyen"
     assert r1["SUBMITTER_EMAIL"] == "nguyenthikimngan269@gmail.com"
+    assert r1["BILLING_EMAIL"] == "nguyenthikimngan269@gmail.com"
     assert r1["AMOUNT"] == 499000
     assert r1["PROVIDER"] == "ChatGPT"
+    assert r1["PLAN"] is None, "PLAN phải là null"
+    assert r1["STATUS"] == "confirmed", "STATUS phải là confirmed"
+    assert r1["EMAIL_MATCH"] == 1, "EMAIL_MATCH phải là 1"
+    assert r1["DELETE_TOKEN"] is None
+    assert r1["INVOICE_NUMBER"] is None
+    assert r1["INVOICE_DATE"] is None
     assert len(r1["ID"]) == 10
     assert r1["FILE_PATH"] == f"aibill/2026-10/{r1['ID']}.png"
-    print("✅ 4. Kiểm tra bản ghi đơn lẻ (Kim Ngân): ĐẠT")
+    print("✅ 4. Kiểm tra bản ghi đơn lẻ (Kim Ngân) với 22 trường chuẩn DB: ĐẠT")
 
     # Kiểm tra bản ghi Hữu Đồng (2 bản ghi tách biệt!):
     hd_recs = [r for r in records if r["SUBMITTER_NAME"] == "Nguyễn Hữu Đồng"]
@@ -129,7 +150,10 @@ def test_full_pipeline():
     assert hd_gpt["USERID"] == "dong.nh"
     assert hd_gpt["SUBMITTER_EMAIL"] == "dongnguyen30794@gmail.com"
     assert hd_gpt["AMOUNT"] == 527778
+    assert hd_gpt["STATUS"] == "confirmed"
+    assert hd_gpt["EMAIL_MATCH"] == 1
     assert hd_cld["AMOUNT"] == 554444
+    assert hd_cld["STATUS"] == "confirmed"
     assert hd_gpt["ID"] != hd_cld["ID"], "Hai hóa đơn phải có ID khác nhau!"
     print("✅ 5. Kiểm tra người có 2 hóa đơn tách 2 dòng độc lập (Hữu Đồng): ĐẠT")
 
@@ -157,7 +181,35 @@ def test_full_pipeline():
     )
     assert rep_path.exists(), "File báo cáo Excel phải được tạo thành công!"
     assert any(mock_project_images.glob("*.png")), "Ảnh phải được lưu vào thư mục dự án!"
-    print("✅ 8. Kiểm tra tách biệt lưu Excel ở Private & Ảnh ở Project: ĐẠT")
+
+    # Kiểm tra cấu trúc Sheet 1 của file Excel báo cáo:
+    wb_out = openpyxl.load_workbook(rep_path)
+    assert "AI_INVOICE_CHECK" in wb_out.sheetnames, "Sheet 1 phải là 'AI_INVOICE_CHECK'"
+    ws_out1 = wb_out["AI_INVOICE_CHECK"]
+
+    expected_headers = [
+        "ID", "CREATED_AT", "MONTH", "SUBMITTER_NAME", "SUBMITTER_EMAIL",
+        "FILE_NAME", "FILE_PATH", "MIME", "DELETE_TOKEN", "PROVIDER",
+        "INVOICE_NUMBER", "INVOICE_DATE", "BILLING_EMAIL", "AMOUNT", "PLAN",
+        "EMAIL_MATCH", "WARNINGS", "AI_RAW", "STATUS", "ADMIN_NOTE",
+        "REVIEWED_AT", "USERID", "LOCAL_IMAGE_PATH"
+    ]
+    actual_headers = [ws_out1.cell(1, c).value for c in range(1, len(expected_headers) + 1)]
+    assert actual_headers == expected_headers, f"Tiêu đề cột không khớp:\nKỳ vọng: {expected_headers}\nThực tế: {actual_headers}"
+
+    # Kiểm tra dòng dữ liệu 1 (Dòng 2 trong file)
+    row2_status = ws_out1.cell(2, 19).value  # Cột STATUS
+    row2_email_match = ws_out1.cell(2, 16).value  # Cột EMAIL_MATCH
+    row2_plan = ws_out1.cell(2, 15).value  # Cột PLAN
+    row2_del_tok = ws_out1.cell(2, 9).value  # Cột DELETE_TOKEN
+
+    assert row2_status == "confirmed", f"STATUS phải là 'confirmed', thực tế: {row2_status}"
+    assert row2_email_match == 1, f"EMAIL_MATCH phải là 1, thực tế: {row2_email_match}"
+    assert row2_plan is None, f"PLAN phải là None, thực tế: {row2_plan}"
+    assert row2_del_tok is None, f"DELETE_TOKEN phải là None, thực tế: {row2_del_tok}"
+    wb_out.close()
+
+    print("✅ 8. Kiểm tra File Excel Báo cáo với 22 Cột chuẩn Database: ĐẠT")
 
     print("\n" + "=" * 60)
     print("🎉 TOÀN BỘ 8 BƯỚC KIỂM THỬ ĐÃ THÀNH CÔNG 100%!")
