@@ -76,6 +76,8 @@ def select_best_sheet(wb, file_path: Path):
     for sname in wb.sheetnames:
         score = 0
         s_lower = sname.lower()
+        if any(ex in s_lower for ex in ["gói ai", "phê duyệt", "tiêu chuẩn", "meeting", "danh sách", "thành viên", "từng team"]):
+            continue
 
         # Điểm thưởng theo tên sheet
         if any(k in s_lower for k in ["thanh toán", "thanh toan", "hóa đơn", "hoa don", "crew", "aibill", "bill"]):

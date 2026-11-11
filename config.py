@@ -228,7 +228,10 @@ def locate_ai_bill_files(
                 if f.name.startswith("~$") or "bao_cao" in f.name.lower() or "report" in f.name.lower():
                     continue
                 name_l = f.name.lower()
-                if any(k in name_l for k in ["thanh toán hóa đơn", "hóa đơn", "crew", "bill"]):
+                # Loại trừ File 2 (chứa member, share, thành viên)
+                if any(k in name_l for k in ["member", "share", "thành viên", "thanh vien"]):
+                    continue
+                if any(k in name_l for k in ["thanh toán hóa đơn", "hóa đơn", "bill"]):
                     f1_candidates.append(f)
 
     f2_candidates = []
@@ -238,6 +241,9 @@ def locate_ai_bill_files(
                 if f.name.startswith("~$") or "bao_cao" in f.name.lower() or "report" in f.name.lower():
                     continue
                 name_l = f.name.lower()
+                # Loại trừ File 1 (hóa đơn từng tháng)
+                if any(k in name_l for k in ["hóa đơn", "hoa don", "thanh toán hóa đơn"]):
+                    continue
                 if any(k in name_l for k in ["member", "share", "chi tiết", "payment", "knox", "boq"]):
                     f2_candidates.append(f)
 
@@ -252,7 +258,16 @@ def locate_ai_bill_files(
     if not selected_f1 and f1_candidates:
         selected_f1 = f1_candidates[0]
 
-    selected_f2 = f2_candidates[0] if f2_candidates else None
+    selected_f2 = None
+    if f2_candidates:
+        def f2_prio(p: Path):
+            nl = p.name.lower()
+            if "member" in nl or "share" in nl: return 0
+            if "chi tiết" in nl or "chi tiet" in nl: return 1
+            if "payment" in nl or "thanh toán" in nl: return 2
+            return 3
+        f2_candidates.sort(key=f2_prio)
+        selected_f2 = f2_candidates[0]
 
     return selected_f1, selected_f2, dir_excel_out, dir_img_out
 
@@ -304,9 +319,11 @@ def locate_batch_ai_bill_files(
                 if f.name in seen_f1_names:
                     continue
                 name_l = f.name.lower()
-                # Nếu file nằm trực tiếp trong invoices_file1 thì nhận mọi file excel (trừ báo cáo)
-                # Nếu nằm ở private_dir chung thì phải có từ khóa hóa đơn/crew/bill/tháng
-                if sdir == dir_f1 or any(k in name_l for k in ["thanh toán hóa đơn", "hóa đơn", "crew", "bill", "tháng", "thang"]):
+                # Tuyệt đối loại trừ File 2 (member share, thành viên)
+                if any(k in name_l for k in ["member", "share", "thành viên", "thanh vien"]):
+                    continue
+                # Nhận diện File 1: Có từ khóa thanh toán hóa đơn / hóa đơn / bill / tháng
+                if sdir == dir_f1 or any(k in name_l for k in ["thanh toán hóa đơn", "hóa đơn", "bill", "tháng", "thang"]):
                     m_str = extract_month_from_filename(f.name)
                     if target_month:
                         m_clean = target_month.replace("-", "").replace(".", "")
@@ -330,17 +347,20 @@ def locate_batch_ai_bill_files(
                 if f.name.startswith("~$") or "bao_cao" in f.name.lower() or "report" in f.name.lower():
                     continue
                 name_l = f.name.lower()
+                # Tuyệt đối loại trừ File 1 (hóa đơn từng tháng)
+                if any(k in name_l for k in ["hóa đơn tháng", "hoa don thang", "thanh toán hóa đơn"]):
+                    continue
                 if sdir == dir_f2 or any(k in name_l for k in ["member", "share", "chi tiết", "payment", "knox", "boq"]):
                     f2_candidates.append(f)
 
-    # Ưu tiên file có từ khóa 'chi tiết', 'thanh toán', 'member', 'share'
+    # Ưu tiên file có từ khóa 'member', 'share' lên hàng đầu (File 2 thực tế: [AI Crew] member share.xlsx)
     selected_f2 = None
     if f2_candidates:
         def f2_priority(p: Path):
             nl = p.name.lower()
-            if "chi tiết" in nl or "chi tiet" in nl: return 0
-            if "thanh toán" in nl or "thanh toan" in nl: return 1
-            if "member" in nl or "share" in nl: return 2
+            if "member" in nl or "share" in nl: return 0
+            if "chi tiết" in nl or "chi tiet" in nl: return 1
+            if "payment" in nl or "thanh toán" in nl: return 2
             return 3
         f2_candidates.sort(key=f2_priority)
         selected_f2 = f2_candidates[0]
